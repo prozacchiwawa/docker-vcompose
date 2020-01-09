@@ -1,5 +1,6 @@
 module Util.CharPlane
   ( CharPlane (..)
+  , charPlaneFromString
   , getCharAt
   )
 where
@@ -23,7 +24,7 @@ charPlaneFromString str =
     maxx = List.foldl' max 0 $ List.length <$> rows
   in
   CharPlane
-    { maxX = maxx
+    { maxX = maxx + 1
     , rows = Vector.fromList $ Vector.fromList <$> rows
     }
 

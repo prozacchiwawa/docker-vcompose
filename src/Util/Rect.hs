@@ -1,5 +1,6 @@
 module Util.Rect
   ( Rect (..)
+  , coordInRect
   )
 where
 
@@ -10,3 +11,7 @@ data Rect =
     , w :: Int
     , h :: Int
     }
+    deriving (Show, Eq, Ord)
+
+coordInRect :: Rect -> Int -> Int -> Bool
+coordInRect Rect {..} j i = j >= x && j < x + w && i >= y && i < y + h

@@ -1,9 +1,13 @@
 module Util.Glyph
-  (
+  ( commas
+  , detectGlyph
+  , detectGlyphs
   )
 where
 
+import Debug.Trace
 import qualified Data.Char as Char
+import qualified Data.Maybe as Maybe
 import qualified Data.Vector as Vector
 import Data.Vector (Vector)
 
@@ -61,6 +65,12 @@ detectLineSegment plane nextCoord validChar isEndChar minLength at =
   else
     Nothing
 
+minWidth :: Int
+minWidth = 5
+
+minHeight :: Int
+minHeight = 1
+
 detectTopSegment :: CharPlane -> (Int,Int) -> Maybe (Int,Int)
 detectTopSegment plane at =
   detectLineSegment
@@ -68,7 +78,7 @@ detectTopSegment plane at =
     (\(x,y) -> (x+1,y))
     (\ch -> ch == '-' || Char.isAlphaNum ch)
     ((==) '.')
-    6
+    minWidth
     at
 
 detectLeftSegment :: CharPlane -> (Int,Int) -> Maybe (Int,Int)
@@ -78,7 +88,7 @@ detectLeftSegment plane at =
     (\(x,y) -> (x,y+1))
     (\ch -> ch == '|' || Char.isAlphaNum ch)
     ((==) '`')
-    2
+    minHeight
     at
 
 detectBottomSegment :: CharPlane -> (Int,Int) -> Maybe (Int,Int)
@@ -88,7 +98,7 @@ detectBottomSegment plane at =
     (\(x,y) -> (x+1,y))
     (\ch -> ch == '-' || Char.isAlphaNum ch)
     ((==) '\'')
-    6
+    minWidth
     at
 
 detectRightSegment :: CharPlane -> (Int,Int) -> Maybe (Int,Int)
@@ -98,7 +108,7 @@ detectRightSegment plane at =
     (\(x,y) -> (x,y+1))
     (\ch -> ch == '|' || Char.isAlphaNum ch)
     ((==) '\'')
-    2
+    minHeight
     at
 
 detectGlyph :: CharPlane -> (Int,Int) -> Maybe Rect
@@ -108,11 +118,23 @@ detectGlyph plane at@(x,y) =
     leftSeg = detectLeftSegment plane at
     botSeg = leftSeg >>= detectBottomSegment plane
     rightSeg = topSeg >>= detectRightSegment plane
+    matchTup = (topSeg, leftSeg, botSeg, rightSeg)
   in
-  case (topSeg, leftSeg, botSeg, rightSeg) of
+  case trace ("matchTup " ++ show matchTup) matchTup of
     (Just tr, Just bl, Just br, Just brc@(ex,ey)) ->
       if br /= brc then
         Nothing
       else
-        Just $ Rect x y (ex - x) (ey - y)
+        Just $ Rect x y (ex - x + 1) (ey - y + 1)
     _ -> Nothing
+
+-- | Detect whether each location represents a glyph and ensure that subsequent coords within
+-- the glyph are not tried.
+detectGlyphs :: CharPlane -> [(Int,Int)] -> [Rect]
+detectGlyphs _ [] = []
+detectGlyphs plane (coord:coords) =
+  let
+    detected = detectGlyph plane coord
+    following = Maybe.maybe id (\r -> filter (\(x,y) -> not $ coordInRect r x y)) detected
+  in
+  Maybe.maybeToList detected ++ detectGlyphs plane (following coords)

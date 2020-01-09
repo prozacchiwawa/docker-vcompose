@@ -1,2 +1,38 @@
+import Control.Exception (assert)
+
+import qualified Data.List as List
+
+import Util.CharPlane
+import Util.Glyph
+import Util.Rect
+
 main :: IO ()
-main = putStrLn "Test suite not yet implemented"
+main = do
+  let
+    testGraph =
+      [ ""
+      , " ,----------------."
+      , " | Test: box      |"
+      , " | Contains: foo, |  ,--.  ,-------."
+      , " `----------------'  |  |  | D: M  |"
+      , "                     `--'  `-------'"
+      , "    ,-------------."
+      , "    |             |"
+      , "    |      ,------'"
+      , "    |      |"
+      , "    `------'"
+      ]
+
+    testResult =
+      [ Rect 1 1 18 4
+      , Rect 27 3 9 3
+      ]
+
+    plane = charPlaneFromString $ List.intercalate "\n" testGraph
+    cs = commas plane
+    glyphs = detectGlyphs plane cs
+
+  putStrLn $ show $ detectGlyph plane (27,3)
+  putStrLn $ show cs
+  putStrLn $ show glyphs
+  assert (glyphs == testResult) (putStrLn "PASS1")
