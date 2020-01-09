@@ -5,7 +5,6 @@ module Util.Glyph
   )
 where
 
-import Debug.Trace
 import qualified Data.Char as Char
 import qualified Data.Maybe as Maybe
 import qualified Data.Vector as Vector
@@ -120,7 +119,7 @@ detectGlyph plane at@(x,y) =
     rightSeg = topSeg >>= detectRightSegment plane
     matchTup = (topSeg, leftSeg, botSeg, rightSeg)
   in
-  case trace ("matchTup " ++ show matchTup) matchTup of
+  case matchTup of
     (Just tr, Just bl, Just br, Just brc@(ex,ey)) ->
       if br /= brc then
         Nothing
