@@ -11,11 +11,11 @@ main = do
   let
     testGraph =
       [ ""
-      , " ,----------------."
-      , " | Test: box      |"
-      , " | Contains: foo, |  ,--.  ,-------."
-      , " `----------------'  |  |  | D: M  |"
-      , "                     `--'  `-------'"
+      , " ,-----I-J--------."
+      , " I Test: box      |"
+      , " | Contains: foo, I  ,--.  ,---I---."
+      , " `-----X-Y--------'  |  |  | D: M  |"
+      , "                     `--'  `---O---'"
       , "    ,-------------."
       , "    |             |"
       , "    |      ,------'"
@@ -33,10 +33,12 @@ main = do
     glyphs = detectGlyphs plane cs
 
     ts = getGlyphText plane <$> glyphs
+    ps = getGlyphPorts plane <$> glyphs
 
   putStrLn $ show $ detectGlyph plane (27,3)
   putStrLn $ show cs
   putStrLn $ show glyphs
   putStrLn $ show ts
+  putStrLn $ show ps
 
   assert (glyphs == testResult) (putStrLn "PASS1")

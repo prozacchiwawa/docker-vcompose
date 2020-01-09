@@ -3,6 +3,7 @@ module Util.Glyph
   , detectGlyph
   , detectGlyphs
   , getGlyphText
+  , getGlyphPorts
   )
 where
 
@@ -166,3 +167,21 @@ getGlyphText plane Rect {..} =
     rows = filter ((/=) "") $ trim <$> rawRows
   in
   List.intercalate "\n" rows
+
+coordsOnRect :: Rect -> [(Int,Int)]
+coordsOnRect Rect {..} =
+  topCoords x w ++ leftCoords y h ++ rightCoords y h ++ botCoords x w
+  where
+    topCoords j l = if l == 0 then [] else (j,y):topCoords (j+1) (l-1)
+    botCoords j l = if l == 0 then [] else (j,y+h):botCoords (j+1) (l-1)
+    leftCoords i l = if l == 0 then [] else (x,i):leftCoords (i+1) (l-1)
+    rightCoords i l = if l == 0 then [] else (x+w,i):rightCoords (i+1) (l-1)
+
+getGlyphPorts :: CharPlane -> Rect -> Map Char (Int,Int)
+getGlyphPorts plane Rect {..} =
+  let
+    rectPoints = coordsOnRect (Rect x y (w-1) (h-1))
+    pairs = (\(j,i) -> (getCharAt plane j i, (j,i))) <$> rectPoints
+    onlySymbols = filter (Char.isAlphaNum . fst) pairs
+  in
+  Map.fromList onlySymbols
