@@ -32,7 +32,11 @@ main = do
     cs = commas plane
     glyphs = detectGlyphs plane cs
 
+    ts = getGlyphText plane <$> glyphs
+
   putStrLn $ show $ detectGlyph plane (27,3)
   putStrLn $ show cs
   putStrLn $ show glyphs
+  putStrLn $ show ts
+
   assert (glyphs == testResult) (putStrLn "PASS1")

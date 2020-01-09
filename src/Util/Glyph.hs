@@ -2,10 +2,14 @@ module Util.Glyph
   ( commas
   , detectGlyph
   , detectGlyphs
+  , getGlyphText
   )
 where
 
 import qualified Data.Char as Char
+import qualified Data.List as List
+import qualified Data.Map as Map
+import Data.Map (Map)
 import qualified Data.Maybe as Maybe
 import qualified Data.Vector as Vector
 import Data.Vector (Vector)
@@ -31,6 +35,11 @@ Make glyphs like this:
   backtick
 
 -}
+
+data GlyphContent = GlyphContent
+  { bindings :: Map String String
+  , ports :: Map Char (Int,Int)
+  }
 
 -- | Find outside box commas that could be the upper left corners of glyphs.
 commas :: CharPlane -> [(Int,Int)]
@@ -137,3 +146,23 @@ detectGlyphs plane (coord:coords) =
     following = Maybe.maybe id (\r -> filter (\(x,y) -> not $ coordInRect r x y)) detected
   in
   Maybe.maybeToList detected ++ detectGlyphs plane (following coords)
+
+trim :: String -> String
+trim str =
+  let
+    tb = dropWhile Char.isSpace str
+  in
+  reverse $ dropWhile Char.isSpace $ reverse tb
+
+-- | Get glyph text
+-- Returns a little string formatted as though it was a standalone text file containing the
+-- trimmed contents of the rectangle.
+getGlyphText :: CharPlane -> Rect -> String
+getGlyphText plane Rect {..} =
+  let
+    rowNums = [y+1..(y+h)-2]
+    colNums = [x+1..(x+w)-2]
+    rawRows = (\i -> (\j -> getCharAt plane j i) <$> colNums) <$> rowNums
+    rows = filter ((/=) "") $ trim <$> rawRows
+  in
+  List.intercalate "\n" rows
