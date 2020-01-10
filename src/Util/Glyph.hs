@@ -266,7 +266,7 @@ findPath plane rectpts pt other =
               if thatChar == want then
                 Set.singleton toward
               else if thatChar == '@' then
-                Set.filter ((/=) (x,y)) $ validNeighbors (nextStep toward)
+                Set.singleton (nextStep toward)
               else if thatChar == '+' then
                 Set.filter ((/=) (x,y)) $ validNeighbors toward
               else
