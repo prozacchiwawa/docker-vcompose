@@ -4,6 +4,7 @@ module Util.Glyph
   , detectGlyphs
   , getGlyphText
   , getGlyphPorts
+  , findPath
   )
 where
 
@@ -12,6 +13,8 @@ import qualified Data.List as List
 import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Maybe as Maybe
+import qualified Data.Set as Set
+import Data.Set (Set)
 import qualified Data.Vector as Vector
 import Data.Vector (Vector)
 
@@ -185,3 +188,58 @@ getGlyphPorts plane Rect {..} =
     onlySymbols = filter (Char.isAlphaNum . fst) pairs
   in
   Map.fromList onlySymbols
+
+-- | Given a char plane, find a path from c1 to c2 through |, -, + and @ chars.
+-- The path must change direction in a + char, and must not change direction in an @ char.
+findPath :: CharPlane -> (Int,Int) -> (Int,Int) -> Bool
+findPath plane pt other =
+  runOne Set.empty $ Set.singleton pt
+  where
+    runOne :: Set (Int,Int) -> Set (Int,Int) -> Bool
+    runOne visited forefront =
+      let
+        nextStep = advance visited forefront
+      in
+      if null nextStep then -- No remaining steps to be taken
+        False
+      else
+        if Set.member other nextStep then
+          True
+        else
+          runOne (Set.union visited forefront) nextStep
+
+    advance :: Set (Int,Int) -> Set (Int,Int) -> Set (Int,Int)
+    advance visited forefront =
+      Set.difference
+        (Set.unions $ validNeighbors <$> Set.toList forefront)
+        (Set.union visited forefront)
+
+    validNeighbors :: (Int,Int) -> Set (Int,Int)
+    validNeighbors (x,y) =
+      let
+        leftN = nextList '-' (\(j,i) -> (j-1,i))
+        rightN = nextList '-' (\(j,i) -> (j+1,i))
+        topN = nextList '|' (\(j,i) -> (j,i-1))
+        botN = nextList '|' (\(j,i) -> (j,i+1))
+
+        nextList want nextStep =
+          let
+            toward@(tx,ty) = nextStep (x,y)
+            thatChar = getCharAt plane tx ty
+            crawl =
+              if thatChar == want then
+                Set.singleton toward
+              else if thatChar == '@' then
+                Set.filter ((/=) (x,y)) $ validNeighbors (nextStep toward)
+              else if thatChar == '+' then
+                Set.filter ((/=) (x,y)) $ validNeighbors toward
+              else
+                Set.empty
+          in
+          if toward == other then
+            Set.singleton toward
+          else
+            crawl
+
+      in
+      Set.unions [leftN, rightN, topN, botN]

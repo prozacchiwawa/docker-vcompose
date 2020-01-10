@@ -15,7 +15,8 @@ main = do
       , " I Test: box      |"
       , " | Contains: foo, I  ,--.  ,---I---."
       , " `-----X-Y--------'  |  |  | D: M  |"
-      , "                     `--'  `---O---'"
+      , "       |             `--'  `---O---'"
+      , "       +-----------------------+"
       , "    ,-------------."
       , "    |             |"
       , "    |      ,------'"
@@ -35,10 +36,13 @@ main = do
     ts = getGlyphText plane <$> glyphs
     ps = getGlyphPorts plane <$> glyphs
 
+    xToO = findPath plane (7,4) (31,5)
+
   putStrLn $ show $ detectGlyph plane (27,3)
   putStrLn $ show cs
   putStrLn $ show glyphs
   putStrLn $ show ts
   putStrLn $ show ps
+  putStrLn $ show xToO
 
   assert (glyphs == testResult) (putStrLn "PASS1")
