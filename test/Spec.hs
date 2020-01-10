@@ -10,12 +10,15 @@ main :: IO ()
 main = do
   let
     testGraph =
-      [ ""
-      , " ,-----I-J--------."
-      , " I Test: box      |"
-      , " | Contains: foo, I  ,--.  ,---I---."
+      [ "       +--------------------+--+"
+      , "       |                    |  |"
+      , " ,-----I-J--------.         |  |"
+      , " | id: mainbox    |         |  |"
+      , " Z Test: box      |         |  |"
+      , " | Contains: foo, |  ,--.  ,Q--I---."
       , " `-----X-Y--------'  |  |  | D: M  |"
-      , "       |             `--'  `---O---'"
+      , "       |             `__'  | id: A |"
+      , "       |                   `---O---'"
       , "       +-----------------------+"
       , "    ,-------------."
       , "    |             |"
@@ -25,8 +28,8 @@ main = do
       ]
 
     testResult =
-      [ Rect 1 1 18 4
-      , Rect 27 3 9 3
+      [ Rect 1 2 18 5
+      , Rect 27 5 9 4
       ]
 
     plane = charPlaneFromString $ List.intercalate "\n" testGraph
@@ -36,13 +39,8 @@ main = do
     ts = getGlyphText plane <$> glyphs
     ps = getGlyphPorts plane <$> glyphs
 
-    xToO = findPath plane (7,4) (31,5)
+    drawing = getDrawing plane
 
-  putStrLn $ show $ detectGlyph plane (27,3)
-  putStrLn $ show cs
-  putStrLn $ show glyphs
-  putStrLn $ show ts
-  putStrLn $ show ps
-  putStrLn $ show xToO
+  putStrLn $ show drawing
 
   assert (glyphs == testResult) (putStrLn "PASS1")

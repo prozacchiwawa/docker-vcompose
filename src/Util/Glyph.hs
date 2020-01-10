@@ -1,10 +1,15 @@
 module Util.Glyph
-  ( commas
+  ( GlyphId (..)
+  , GlyphContent (..)
+  , GlyphVertex (..)
+  , GlyphDrawing (..)
+  , commas
   , detectGlyph
   , detectGlyphs
   , getGlyphText
   , getGlyphPorts
   , findPath
+  , getDrawing
   )
 where
 
@@ -41,9 +46,28 @@ Make glyphs like this:
 -}
 
 data GlyphContent = GlyphContent
-  { bindings :: Map String String
-  , ports :: Map Char (Int,Int)
+  { gBindings :: Map String String
+  , gPorts :: Map Char (Int,Int)
+  , gRect :: Rect
   }
+  deriving (Show, Eq, Ord)
+
+data GlyphId
+  = GlyphId String
+  | GlyphRect Rect
+  deriving (Show, Eq, Ord)
+
+data GlyphVertex = GlyphVertex
+  { toGlyph :: GlyphId
+  , conn :: Char
+  }
+  deriving (Show, Eq, Ord)
+
+data GlyphDrawing = GlyphDrawing
+  { glyphs :: Map GlyphId GlyphContent
+  , nets :: Map GlyphVertex (Set GlyphVertex)
+  }
+  deriving (Show, Eq, Ord)
 
 -- | Find outside box commas that could be the upper left corners of glyphs.
 commas :: CharPlane -> [(Int,Int)]
@@ -189,10 +213,22 @@ getGlyphPorts plane Rect {..} =
   in
   Map.fromList onlySymbols
 
+colonSplit :: String -> (String,String)
+colonSplit str =
+  let
+    name = trim $ List.takeWhile ((/=) ':') str
+    val = trim $ dropWhile ((==) ':') $ dropWhile ((/=) ':') str
+  in
+  (name, val)
+
+glyphTextToBindings :: String -> Map String String
+glyphTextToBindings str =
+  Map.fromList $ colonSplit <$> lines str
+
 -- | Given a char plane, find a path from c1 to c2 through |, -, + and @ chars.
 -- The path must change direction in a + char, and must not change direction in an @ char.
-findPath :: CharPlane -> (Int,Int) -> (Int,Int) -> Bool
-findPath plane pt other =
+findPath :: CharPlane -> Set (Int,Int) -> (Int,Int) -> (Int,Int) -> Bool
+findPath plane rectpts pt other =
   runOne Set.empty $ Set.singleton pt
   where
     runOne :: Set (Int,Int) -> Set (Int,Int) -> Bool
@@ -212,7 +248,7 @@ findPath plane pt other =
     advance visited forefront =
       Set.difference
         (Set.unions $ validNeighbors <$> Set.toList forefront)
-        (Set.union visited forefront)
+        (Set.unions $ [visited, forefront, rectpts])
 
     validNeighbors :: (Int,Int) -> Set (Int,Int)
     validNeighbors (x,y) =
@@ -243,3 +279,67 @@ findPath plane pt other =
 
       in
       Set.unions [leftN, rightN, topN, botN]
+
+createNets
+  :: CharPlane
+  -> [((Int,Int), GlyphContent, GlyphVertex)]
+  -> Map GlyphVertex (Set GlyphVertex)
+createNets plane inputs =
+  List.foldl'
+    (\vmap inp@(pt,GlyphContent {..},vt) ->
+       let
+         insetRect = Rect (x gRect) (y gRect) ((w gRect) - 1) ((h gRect) - 1)
+         inotme = filter ((/=) inp) inputs
+         matches =
+           filter
+             (\(otherpt,_,_) ->
+                findPath plane (Set.fromList $ coordsOnRect insetRect) pt otherpt
+             )
+             inotme
+       in
+       if not $ null matches then
+         Map.insert vt (Set.fromList $ (\(_,_,v) -> v) <$> matches) vmap
+       else
+         vmap
+    )
+    Map.empty
+    inputs
+
+getDrawing :: CharPlane -> GlyphDrawing
+getDrawing plane =
+  let
+    cs = commas plane
+    glyphRects = detectGlyphs plane cs
+
+    rawGlyphs =
+      (\r ->
+          (r, glyphTextToBindings $ getGlyphText plane r, getGlyphPorts plane r)
+      ) <$> glyphRects
+
+    labeledGlyphs :: [(GlyphId, GlyphContent)] =
+      (\(rect, bindings, ports) ->
+          let
+            gid =
+              maybe
+                (GlyphRect rect)
+                GlyphId
+                (Map.lookup "id" bindings)
+          in
+          (gid, GlyphContent bindings ports rect)
+      ) <$> rawGlyphs
+
+    glyphPorts :: [((Int,Int), GlyphContent, GlyphVertex)] =
+      concat $
+        (\(gid, gc@GlyphContent {..}) ->
+           let
+             portPts = Map.toList gPorts
+           in
+           (\(ch,pt) -> (pt,gc,GlyphVertex gid ch)) <$> portPts
+        ) <$> labeledGlyphs
+
+    glyphNets = createNets plane glyphPorts
+  in
+  GlyphDrawing
+    { glyphs = Map.fromList labeledGlyphs
+    , nets = glyphNets
+    }
