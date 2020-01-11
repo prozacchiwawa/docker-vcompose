@@ -14,6 +14,7 @@ default-extensions:
 - RecordWildCards
 - ScopedTypeVariables
 - TupleSections
+- DeriveGeneric
 
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
@@ -25,9 +26,15 @@ default-extensions:
 description:         Please see the README on GitHub at <https://github.com/githubuser/vcompose#readme>
 
 dependencies:
+- aeson
 - base >= 4.7 && < 5
 - containers
+- directory
+- filepath
+- text
+- transformers
 - vector
+- yaml
 
 library:
   source-dirs: src

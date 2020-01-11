@@ -1,0 +1,5 @@
+dsyBaseYaml: 'system.template.yaml'
+
+dsySourceDirs:
+  - ./machines
+  - ./protocols
