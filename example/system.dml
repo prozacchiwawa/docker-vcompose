@@ -2,3 +2,8 @@
 | id: main                 |
 | system-yaml: system.yaml |
 `--------------------------'
+
+,-----------------------.
+| id: couchdb           |
+| machine: couchdb      C
+`-----------------------'

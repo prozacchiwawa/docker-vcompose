@@ -5,6 +5,8 @@ import Control.Monad.Trans.Except
 import qualified Data.Aeson as Aeson
 import Data.Either
 import qualified Data.List as List
+import qualified Data.Map as Map
+import Data.Map (Map)
 import qualified System.Directory as Dir
 import qualified System.Environment as Sys
 import qualified System.FilePath as Path
@@ -29,13 +31,13 @@ readAndParseYaml file = do
   fileBody <- readFile file
   pure $ parseYaml fileBody
 
-parseFilesAs :: (Aeson.FromJSON a) => [String] -> IO (Either String [a])
+parseFilesAs :: (Aeson.FromJSON a) => [String] -> IO (Either String [(String,a)])
 parseFilesAs files = do
   results <-
     traverse
       (\f -> do
          parsed <- readAndParseYaml f
-         pure $ either (Left . (f,)) Right parsed
+         pure $ either (Left . (f,)) (Right . (f,)) parsed
       )
       files
   let
@@ -73,10 +75,19 @@ main = do
         protosList <- ExceptT $ Right <$> getSourceFileNames "netproto" sourceFullPaths
         machinesList <- ExceptT $ Right <$> getSourceFileNames "machine" sourceFullPaths
 
-        protocols :: [[NetProtoYaml]] <- ExceptT $ parseFilesAs protosList
-        machines :: [MachineDefYaml] <- ExceptT $ parseFilesAs machinesList
+        protocolDefsRaw :: [(String,[NetProtoYaml])] <- ExceptT $ parseFilesAs protosList
+        let
+          protocolDefs =
+            Map.fromList $
+              (\np@NetProtoYaml {..} -> (npyName,np)) <$> concat (snd <$> protocolDefsRaw)
 
-        pure (protocols, machines, system)
+        protocols <- ExceptT $ pure $ realizeProtocolDefs protocolDefs
+
+        machineDefsRaw :: [(String,MachineDefYaml)] <- ExceptT $ parseFilesAs machinesList
+        let
+          machineDefs = Map.fromList machineDefsRaw
+
+        pure (protocols, machineDefs, drawing, system)
 
       putStrLn $ show result
     _ -> do
