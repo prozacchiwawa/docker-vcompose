@@ -5,6 +5,7 @@ module Docker.System
   , MachineDefYaml (..)
   , parseYaml
   , realizeProtocolDefs
+  , realizeMachineDefs
   )
 where
 
@@ -29,13 +30,12 @@ data NetProto = NetProto
   }
   deriving (Show, Eq, Ord)
 
-{-
 data MachineDefListenPort = MachineDefListenPort
   { mdpName :: String
   , mdpChar :: Char
   , mdpProtocol :: NetProto
   , mdpInternal :: Int
-  , mdpExternal :: Int
+  , mdpExternal :: Maybe Int
   }
   deriving (Show, Eq, Ord)
 
@@ -57,11 +57,10 @@ data MachineDef = MachineDef
   { mdName :: String
   , mdTemplate :: String
   , mdPorts :: Map Char MachineDefListenPort
-  , mdMounts :: Map Char MachineDefMount
   , mdConnections :: Map Char MachineDefConn
+  , mdMounts :: Map Char MachineDefMount
   }
   deriving (Show, Eq, Ord)
--}
 
 data DockerSystem = DockerSystem
   {
@@ -84,27 +83,39 @@ data NetProtoYaml = NetProtoYaml
 instance Aeson.FromJSON NetProtoYaml
 
 data NetListenPortYaml = NetListenPortYaml
-  { nlpName :: String
-  , nlpLabel :: String
-  , nlpProtocol :: String
+  { nlpyName :: String
+  , nlpyLabel :: String
+  , nlpyProtocol :: String
+  , nlpyPort :: Int
+  , nlpyDefaultHostPort :: Maybe Int
   }
   deriving (Show, Generic)
 
 instance Aeson.FromJSON NetListenPortYaml
 
 data NetConnectPortYaml = NetConnectPortYaml
-  { ncpName :: String
-  , ncpLabel :: String
-  , ncpProtocol :: String
+  { ncpyName :: String
+  , ncpyLabel :: String
+  , ncpyProtocol :: String
   }
   deriving (Show, Generic)
 
 instance Aeson.FromJSON NetConnectPortYaml
 
+data MachineDefMountYaml = MachineDefMountYaml
+  { mdymName :: String
+  , mdymLabel :: String
+  , mdymTarget :: String
+  }
+  deriving (Show, Generic)
+
+instance Aeson.FromJSON MachineDefMountYaml
+
 data MachineDefYaml = MachineDefYaml
   { mdyBaseYaml :: String
   , mdyListenPorts :: [NetListenPortYaml]
   , mdyConnectPorts :: [NetConnectPortYaml]
+  , mdyMounts :: [MachineDefMountYaml]
   }
   deriving (Show, Generic)
 
@@ -138,16 +149,86 @@ realizeProtocolDef path defs proto =
       )
       (Map.lookup proto defs)
 
-realizeProtocolDefs :: Map String NetProtoYaml -> Either String (Map String NetProto)
-realizeProtocolDefs protocolDefs =
+realizeMachineDef
+  :: Map String NetProto
+  -> Map String MachineDefYaml
+  -> String
+  -> Either String MachineDef
+realizeMachineDef protos defs machname =
+  maybe
+    (Left $ "No machine named " ++ machname ++ " found")
+    yamlToRealMachine
+    (Map.lookup machname defs)
+  where
+    realizeListenPort :: NetListenPortYaml -> Either String MachineDefListenPort
+    realizeListenPort NetListenPortYaml {..} =
+      maybe
+        (Left $ "Protocol not found " ++ nlpyProtocol ++ " in port definition " ++ nlpyName ++ " machine " ++ machname)
+        (\np ->
+           case List.uncons nlpyLabel of
+             (Just (ch,[])) ->
+               Right $ MachineDefListenPort
+                 { mdpName = nlpyName
+                 , mdpChar = ch
+                 , mdpProtocol = np
+                 , mdpInternal = nlpyPort
+                 , mdpExternal = nlpyDefaultHostPort
+                 }
+             _ ->
+               Left $ "Label must be 1 char long in port definition " ++ nlpyName ++ " machine " ++ machname
+        )
+        (Map.lookup nlpyProtocol protos)
+    
+    yamlToRealMachine MachineDefYaml {..} =
+      let
+        (lpErrors, listenPorts) =
+          partitionEithers $ realizeListenPort <$> mdyListenPorts
+      in
+      if null lpErrors then
+        Right $ MachineDef
+          { mdName = machname
+          , mdTemplate = mdyBaseYaml
+          , mdPorts =
+              Map.fromList $
+                (\mdlp@MachineDefListenPort {..} -> (mdpChar, mdlp)) <$> listenPorts
+          , mdConnections = Map.empty
+          , mdMounts = Map.empty
+          }
+      else
+        Left $ List.intercalate "," $ show <$> lpErrors
+
+realizeMapOfObjects
+  :: forall yaml final.
+     Map String yaml
+  -> (Map String yaml -> String -> Either String final)
+  -> (final -> String)
+  -> Either String (Map String final)
+realizeMapOfObjects objDefs realizeOneObject getNameOf =
   let
-    result = (realizeProtocolDef Set.empty protocolDefs) <$> (Map.keys protocolDefs)
+    result = (realizeOneObject objDefs) <$> (Map.keys objDefs)
     (errors, results) = partitionEithers result
   in
   if null errors then
-    Right $ Map.fromList $ (\np@NetProto {..} -> (npName,np)) <$> results
+    Right $ Map.fromList $ (\np -> (getNameOf np,np)) <$> results
   else
     Left $ List.intercalate "," $ show <$> errors
+
+realizeProtocolDefs :: Map String NetProtoYaml -> Either String (Map String NetProto)
+realizeProtocolDefs protocolDefs =
+  realizeMapOfObjects
+    protocolDefs
+    (realizeProtocolDef Set.empty)
+    npName
+
+realizeMachineDefs
+  :: Map String NetProto
+  -> Map String MachineDefYaml
+  -> Either String (Map String MachineDef)
+realizeMachineDefs protos machineDefs =
+  realizeMapOfObjects
+    machineDefs
+    (realizeMachineDef protos)
+    mdName
 
 parseYaml :: (Aeson.FromJSON a) => String -> Either String a
 parseYaml text =

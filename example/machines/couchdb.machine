@@ -1,8 +1,10 @@
 mdyBaseYaml: 'couchdb.template.yaml'
 
 mdyListenPorts:
-  - nlpName: http-listener
-    nlpLabel: C
-    nlpProtocol: couchdb
+  - nlpyName: http-listener
+    nlpyLabel: C
+    nlpyPort: 5984
+    nlpyProtocol: couchdb
 
 mdyConnectPorts: []
+mdyMounts: []

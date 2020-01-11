@@ -49,6 +49,18 @@ parseFilesAs files = do
     else
       Left (List.intercalate "\n" $ show <$> errors)
 
+includeMachineTemplate
+  :: (String,MachineDefYaml)
+  -> IO (String,MachineDefYaml)
+includeMachineTemplate (filepath,mdy@MachineDefYaml {..}) = do
+  let
+    targetPath = Path.combine (Path.takeDirectory filepath) mdyBaseYaml
+  templateContent <- readFile targetPath
+  pure $ (filepath, mdy { mdyBaseYaml = templateContent })
+
+includeMachineTemplates :: [(String,MachineDefYaml)] -> IO [(String,MachineDefYaml)]
+includeMachineTemplates = traverse includeMachineTemplate
+
 main :: IO ()
 main = do
   args <- Sys.getArgs
@@ -84,8 +96,13 @@ main = do
         protocols <- ExceptT $ pure $ realizeProtocolDefs protocolDefs
 
         machineDefsRaw :: [(String,MachineDefYaml)] <- ExceptT $ parseFilesAs machinesList
+        machineDefsTmplRaw <- ExceptT $ Right <$> includeMachineTemplates machineDefsRaw
         let
-          machineDefs = Map.fromList machineDefsRaw
+          machineDefs =
+            Map.fromList $
+              (\(n,v) -> (Path.dropExtension $ Path.takeFileName n, v)) <$> machineDefsTmplRaw
+
+        machines <- ExceptT $ pure $ realizeMachineDefs protocols machineDefs
 
         pure (protocols, machineDefs, drawing, system)
 
