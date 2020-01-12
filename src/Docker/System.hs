@@ -12,6 +12,8 @@ where
 
 import GHC.Generics
 
+import Control.Monad.Trans.Except
+
 import qualified Data.Aeson as Aeson
 import Data.Either
 import qualified Data.Map as Map
@@ -180,19 +182,40 @@ realizeMachineDef protos defs machname =
         )
         (Map.lookup nlpyProtocol protos)
 
+    realizeConnectPort :: NetConnectPortYaml -> Either String MachineDefConn
+    realizeConnectPort NetConnectPortYaml {..} =
+      maybe
+        (Left $ "No proto matching " ++ ncpyProtocol ++ " for connection " ++ ncpyName)
+        (\np ->
+           case List.uncons ncpyLabel of
+             (Just (ch,[])) ->
+               Right $ MachineDefConn
+                 { mdcName = ncpyName
+                 , mdcChar = ch
+                 , mdcProtocol = np
+                 }
+             _ -> Left $ "Label must be 1 char long in connect def " ++ ncpyName ++ " machine " ++ machname
+        )
+        (Map.lookup ncpyProtocol protos)
+
     yamlToRealMachine MachineDefYaml {..} =
       let
         (lpErrors, listenPorts) =
           partitionEithers $ realizeListenPort <$> mdyListenPorts
+
+        (cpErrors, connectPorts) =
+          partitionEithers $ realizeConnectPort <$> mdyConnectPorts
       in
-      if null lpErrors then
+      if null lpErrors && null cpErrors then
         Right $ MachineDef
           { mdName = machname
           , mdTemplate = mdyBaseYaml
           , mdPorts =
               Map.fromList $
                 (\mdlp@MachineDefListenPort {..} -> (mdpChar, mdlp)) <$> listenPorts
-          , mdConnections = Map.empty
+          , mdConnections =
+              Map.fromList $
+                (\mdc@MachineDefConn {..} -> (mdcChar, mdc)) <$> connectPorts
           , mdMounts = Map.empty
           }
       else
