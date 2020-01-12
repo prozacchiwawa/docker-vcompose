@@ -7,24 +7,30 @@ module Docker.System
   , parseYaml
   , realizeProtocolDefs
   , realizeMachineDefs
+  , assembleSystem
   )
 where
 
 import GHC.Generics
 
+import qualified Control.Error.Util as CE
+import Control.Monad
 import Control.Monad.Trans.Except
 
 import qualified Data.Aeson as Aeson
 import Data.Either
+import qualified Data.List as List
 import qualified Data.Map as Map
 import Data.Map (Map)
-import qualified Data.List as List
+import Data.Maybe
 import qualified Data.Set as Set
 import Data.Set (Set)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
+import qualified Data.Vector as Vector
 import qualified Data.Yaml as Yaml
 
+import Util.Aeson
 import Util.Glyph
 
 data NetProto = NetProto
@@ -65,15 +71,26 @@ data MachineDef = MachineDef
   }
   deriving (Show, Eq, Ord)
 
-data DockerSystem = DockerSystem
+data MachineConnectPort = MachineConnectPort
   {
-{-
-    dsBaseYaml :: Aeson.Value
+  }
+  deriving (Show, Eq)
+
+data Machine = Machine
+  { mName :: String
+  , mNetwork :: String
+  , mListenPorts :: [MachineDefListenPort]
+  , mConnectPorts :: [MachineConnectPort]
+  , mMounts :: [(MachineDefMount)]
+  }
+  deriving (Show, Eq)
+
+data DockerSystem = DockerSystem
+  { dsBaseYaml :: Aeson.Value
   , dsMachineDefs :: Map String MachineDef
-  , dsProtocols :: Set NetProto
-  , dsLocalDirs :: [String]
-  , dsDrawing :: GlyphDrawing
--}
+  , dsProtocols :: Map String NetProto
+  , dsDrawing :: GlyphDrawing Aeson.Value
+  , dsMachineInstances :: Map String Machine
   }
   deriving (Show)
 
@@ -260,3 +277,122 @@ parseYaml text =
     (Left . show)
     (Right . id)
     (Yaml.decodeEither' (Text.encodeUtf8 $ Text.pack text))
+
+getNetworkYaml :: GlyphDrawing Aeson.Value -> Either String Aeson.Value
+getNetworkYaml gd@GlyphDrawing {..} = do
+  (networks,tl) <-
+    CE.note "No glyph exists with networks key" $
+    List.uncons $
+    catMaybes $
+    (\(gid,gc@GlyphContent {..}) -> getTopLevelValue "networks" gData) <$>
+      Map.toList glyphs
+
+  if null tl then
+    pure networks
+  else
+    Left "Multiple glyphs have a toplevel networks key"
+
+getDefaultNetwork :: Aeson.Value -> Either String String
+getDefaultNetwork (Aeson.Array a) =
+  CE.note "networks array was empty or not array of strings" $ unstring =<< a Vector.!? 0
+getDefaultNetwork _ = Left "networks yaml isn't an array"
+
+assembleSystem
+  :: GlyphDrawing Aeson.Value
+  -> DockerSystemYaml
+  -> Map String MachineDef
+  -> Map String NetProto
+  -> Either String DockerSystem
+assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
+  parsedBaseYaml <- parseYaml dsyBaseYaml
+  networkYaml <- getNetworkYaml gd
+
+  let
+    (miErrors, machineInstances) =
+      partitionEithers $ createBareMachineInstance <$> glyphMachines
+
+  if null miErrors then do
+    let
+      basicSystem =
+        DockerSystem
+          { dsBaseYaml = parsedBaseYaml
+          , dsMachineDefs = machines
+          , dsProtocols = protos
+          , dsDrawing = gd
+          , dsMachineInstances =
+              Map.fromList $ ((\m -> (mName m,m)) . snd) <$> machineInstances
+          }
+
+      machineByGlyph = Map.fromList machineInstances
+
+    connectedSystem <-
+      foldM (performConnections gd machineByGlyph) basicSystem $ Map.toList glyphs
+
+    pure connectedSystem
+  else
+    Left $ List.intercalate "," $ show <$> miErrors
+
+  where
+    glyphList = Map.toList glyphs
+    glyphMachines = catMaybes $ (uncurry associateMachineDef) <$> glyphList
+
+    createBareMachineInstance
+      :: (GlyphId, GlyphContent Aeson.Value, String)
+      -> Either String (GlyphId, Machine)
+    createBareMachineInstance (gid, gc@GlyphContent {..}, machname) = do
+      lookedUpMachine <-
+        CE.note ("Cannot find machine " ++ machname ++ " in glyph " ++ show gid) $
+        Map.lookup machname machines
+      machineName <-
+        CE.note ("No id given for machine " ++ show gid) $
+        getTopLevelBinding "id" gData
+      networkYaml <- getNetworkYaml gd
+      useNetwork <- getDefaultNetwork networkYaml
+
+      pure $
+        ( gid
+        , Machine
+            { mName = machineName
+            , mNetwork = useNetwork
+            , mListenPorts = Map.elems $ mdPorts lookedUpMachine
+            , mConnectPorts = []
+            , mMounts = []
+            }
+        )
+
+    associateMachineDef
+      :: GlyphId
+      -> GlyphContent Aeson.Value
+      -> Maybe (GlyphId, GlyphContent Aeson.Value, String)
+    associateMachineDef gid gc@GlyphContent {..} = do
+      machname <- getTopLevelBinding "machine" gData
+      pure (gid, gc, machname)
+
+    performConnection
+      :: GlyphDrawing Aeson.Value
+      -> Map GlyphId Machine
+      -> GlyphId
+      -> GlyphContent Aeson.Value
+      -> DockerSystem
+      -> (GlyphVertex, Set GlyphVertex)
+      -> Either String DockerSystem
+    performConnection drawing machineByGlyph gid gc@GlyphContent {..} system (gvtx@GlyphVertex {..}, connectedTo) = do
+      firstMachine <-
+        CE.note ("Lookup failed for glyph id (to) " ++ show gid) $
+        Map.lookup gid machineByGlyph
+
+      secondMachine <-
+        CE.note ("Lookup failed for glyph id " ++ show toGlyph) $
+        Map.lookup toGlyph machineByGlyph
+
+      undefined
+
+    performConnections
+      :: GlyphDrawing Aeson.Value
+      -> Map GlyphId Machine
+      -> DockerSystem
+      -> (GlyphId, GlyphContent Aeson.Value)
+      -> Either String DockerSystem
+    performConnections drawing@GlyphDrawing {..} machineByGlyph system (gid, gc@GlyphContent {..}) =
+      foldM (performConnection drawing machineByGlyph gid gc) system $
+      Map.toList nets

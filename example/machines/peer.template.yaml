@@ -26,8 +26,3 @@ volumes:
   - ./crypto-config/peerOrganizations/org1.mydomain.com/peers/peer0.org1.mydomain.com/msp:/etc/hyperledger/msp/peer
   - ./crypto-config/peerOrganizations/org1.mydomain.com/users:/etc/hyperledger/msp/users
   - ./config:/etc/hyperledger/configtx
-networks:
-  - ${network}
-ports:
-  - ${peer.port.external}:${peer.port.internal}
-  - 7053:7053

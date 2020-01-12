@@ -24,10 +24,6 @@ data MachineInstance = MachineInstance
   }
   deriving (Show)
 
-getTopLevelBinding :: String -> Aeson.Value -> Maybe String
-getTopLevelBinding name (Aeson.Object o) = unstring =<< HashMap.lookup (Text.pack name) o
-getTopLevelBinding _ _ = Nothing
-
 getSystemFilenameFromGlyphContent :: GlyphContent Aeson.Value -> Maybe String
 getSystemFilenameFromGlyphContent = getTopLevelBinding "system-yaml" . gData
 

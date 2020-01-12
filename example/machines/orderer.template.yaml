@@ -13,7 +13,3 @@ volumes:
   - ./config/:/etc/hyperledger/configtx
   - ./crypto-config/ordererOrganizations/mydomain.com/orderers/orderer.mydomain.com/:/etc/hyperledger/msp/orderer
   - ./crypto-config/peerOrganizations/org1.mydomain.com/peers/peer0.org1.mydomain.com/:/etc/hyperledger/msp/peerOrg1
-networks:
-  - ${network}
-ports:
-  - ${peer.port.external}:${peer.port.internal}

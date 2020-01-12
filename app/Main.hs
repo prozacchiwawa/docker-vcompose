@@ -117,7 +117,9 @@ main = do
 
         machines <- ExceptT $ pure $ realizeMachineDefs protocols machineDefs
 
-        pure (protocols, machineDefs, drawing, system)
+        sysdef <- ExceptT $ pure $ assembleSystem drawing system machines protocols
+
+        pure sysdef
 
       putStrLn $ show result
     _ -> do

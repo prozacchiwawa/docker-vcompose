@@ -7,7 +7,3 @@ environment:
   - COUCHDB_PASSWORD=
 # Comment/Uncomment the port mapping if you want to hide/expose the CouchDB service,
 # for example map it to utilize Fauxton User Interface in dev environments.
-networks:
-  - ${network}
-ports:
-  - "${http-listener.port.external}:${http-listener.port.internal}"

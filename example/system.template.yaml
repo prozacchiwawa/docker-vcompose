@@ -1,7 +1,1 @@
 version: '2'
-
-networks:
-  basic
-
-services:
-  ${services}
