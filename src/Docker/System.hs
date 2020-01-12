@@ -3,6 +3,7 @@ module Docker.System
   , DockerSystemYaml (..)
   , NetProtoYaml (..)
   , MachineDefYaml (..)
+  , MachineDef (..)
   , parseYaml
   , realizeProtocolDefs
   , realizeMachineDefs
@@ -178,7 +179,7 @@ realizeMachineDef protos defs machname =
                Left $ "Label must be 1 char long in port definition " ++ nlpyName ++ " machine " ++ machname
         )
         (Map.lookup nlpyProtocol protos)
-    
+
     yamlToRealMachine MachineDefYaml {..} =
       let
         (lpErrors, listenPorts) =

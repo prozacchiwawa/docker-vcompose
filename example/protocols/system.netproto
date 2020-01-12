@@ -12,3 +12,11 @@
 - npyName: "couchdb"
   npySpecializes:
     - http
+
+- npyName: "grpc"
+  npySpecializes:
+    - tcp
+
+- npyName: "hyperledger-peer"
+  npySpecializes:
+    - grpc

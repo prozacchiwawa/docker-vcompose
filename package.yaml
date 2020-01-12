@@ -33,6 +33,7 @@ dependencies:
 - filepath
 - text
 - transformers
+- unordered-containers
 - vector
 - yaml
 

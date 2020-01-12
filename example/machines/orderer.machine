@@ -1,0 +1,10 @@
+mdyBaseYaml: 'orderer.template.yaml'
+
+mdyListenPorts:
+  - nlpyName: peer
+    nlpyLabel: P
+    nlpyPort: 7050
+    nlpyProtocol: hyperledger-peer
+
+mdyConnectPorts: []
+mdyMounts: []

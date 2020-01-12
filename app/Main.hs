@@ -7,6 +7,9 @@ import Data.Either
 import qualified Data.List as List
 import qualified Data.Map as Map
 import Data.Map (Map)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
+import qualified Data.Yaml as Yaml
 import qualified System.Directory as Dir
 import qualified System.Environment as Sys
 import qualified System.FilePath as Path
@@ -61,6 +64,9 @@ includeMachineTemplate (filepath,mdy@MachineDefYaml {..}) = do
 includeMachineTemplates :: [(String,MachineDefYaml)] -> IO [(String,MachineDefYaml)]
 includeMachineTemplates = traverse includeMachineTemplate
 
+showTopLvlExn :: Show e => Either [e] v -> Either String v
+showTopLvlExn = either (Left . List.intercalate "," . (fmap show)) Right
+
 main :: IO ()
 main = do
   args <- Sys.getArgs
@@ -69,10 +75,17 @@ main = do
       drawingText <- readFile dwg
       let
         charPlane = charPlaneFromString drawingText
-        drawing = getDrawing charPlane
-        dirOfDwg = Path.takeDirectory dwg
 
       result <- runExceptT $ do
+        drawing :: GlyphDrawing Aeson.Value <- ExceptT $ pure $ showTopLvlExn $
+          getDrawing
+            (Yaml.decodeEither' . Text.encodeUtf8 . Text.pack)
+            (getTopLevelBinding "id")
+            charPlane
+
+        let
+          dirOfDwg = Path.takeDirectory dwg
+
         sysYamlPath <- ExceptT $ pure $ getSystemYamlFromDrawing drawing
         let
           sysYamlFullPath = Path.combine dirOfDwg sysYamlPath

@@ -1,0 +1,18 @@
+mdyBaseYaml: 'peer.template.yaml'
+
+mdyListenPorts:
+  - nlpyName: peer
+    nlpyLabel: P
+    nlpyPort: 7051
+    nlpyProtocol: hyperledger-peer
+
+mdyConnectPorts:
+  - ncpyName: couchdb
+    ncpyLabel: c
+    ncpyProtocol: couchdb
+
+  - ncpyName: orderer
+    ncpyLabel: o
+    ncpyProtocol: hyperledger-peer
+
+mdyMounts: []

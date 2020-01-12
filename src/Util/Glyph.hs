@@ -13,18 +13,26 @@ module Util.Glyph
   )
 where
 
+import GHC.Generics
+
+import qualified Data.Aeson as Aeson
 import qualified Data.Char as Char
+import Data.Either
+import qualified Data.HashMap.Strict as HashMap
+import Data.HashMap.Strict (HashMap)
 import qualified Data.List as List
 import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Maybe as Maybe
 import qualified Data.Set as Set
 import Data.Set (Set)
+import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 import Data.Vector (Vector)
 
-import Util.Rect
+import Util.Aeson
 import Util.CharPlane
+import Util.Rect
 
 {-
 
@@ -45,12 +53,15 @@ Make glyphs like this:
 
 -}
 
-data GlyphContent = GlyphContent
-  { gBindings :: Map String String
+data GlyphContent a = GlyphContent
+  { gData :: a
   , gPorts :: Map Char (Int,Int)
   , gRect :: Rect
   }
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq)
+
+instance Functor GlyphContent where
+  fmap f gc = gc { gData = f (gData gc) }
 
 data GlyphId
   = GlyphId String
@@ -63,11 +74,11 @@ data GlyphVertex = GlyphVertex
   }
   deriving (Show, Eq, Ord)
 
-data GlyphDrawing = GlyphDrawing
-  { glyphs :: Map GlyphId GlyphContent
+data GlyphDrawing a = GlyphDrawing
+  { glyphs :: Map GlyphId (GlyphContent a)
   , nets :: Map GlyphVertex (Set GlyphVertex)
   }
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq)
 
 -- | Find outside box commas that could be the upper left corners of glyphs.
 commas :: CharPlane -> [(Int,Int)]
@@ -182,6 +193,11 @@ trim str =
   in
   reverse $ dropWhile Char.isSpace $ reverse tb
 
+leastColumn :: String -> Maybe Int
+leastColumn [] = Nothing
+leastColumn (' ':tl) = ((+) 1) <$> leastColumn tl
+leastColumn (_:tl) = Just 0
+
 -- | Get glyph text
 -- Returns a little string formatted as though it was a standalone text file containing the
 -- trimmed contents of the rectangle.
@@ -191,7 +207,8 @@ getGlyphText plane Rect {..} =
     rowNums = [y+1..(y+h)-2]
     colNums = [x+1..(x+w)-2]
     rawRows = (\i -> (\j -> getCharAt plane j i) <$> colNums) <$> rowNums
-    rows = filter ((/=) "") $ trim <$> rawRows
+    leastCol = List.foldl' min (maxX plane) $ Maybe.catMaybes $ leastColumn <$> rawRows
+    rows = (drop (leastCol - 1) . trim) <$> rawRows
   in
   List.intercalate "\n" rows
 
@@ -287,8 +304,9 @@ findPath plane rectpts pt other =
       Set.unions [leftN, rightN, topN, botN]
 
 createNets
-  :: CharPlane
-  -> [((Int,Int), GlyphContent, GlyphVertex)]
+  :: (Eq a)
+  => CharPlane
+  -> [((Int,Int), GlyphContent a, GlyphVertex)]
   -> Map GlyphVertex (Set GlyphVertex)
 createNets plane inputs =
   List.foldl'
@@ -311,30 +329,47 @@ createNets plane inputs =
     Map.empty
     inputs
 
-getDrawing :: CharPlane -> GlyphDrawing
-getDrawing plane =
+lookupString :: String -> Aeson.Value -> Maybe String
+lookupString name (Aeson.Object o) = unstring =<< HashMap.lookup (Text.pack name) o
+lookupString _ _ = Nothing
+
+getDrawing
+  :: forall e v.
+     Eq v
+  => (String -> Either e v)
+  -> (v -> Maybe String)
+  -> CharPlane
+  -> Either [e] (GlyphDrawing v)
+getDrawing decoder getId plane =
   let
     cs = commas plane
     glyphRects = detectGlyphs plane cs
 
     rawGlyphs =
       (\r ->
-          (r, glyphTextToBindings $ getGlyphText plane r, getGlyphPorts plane r)
+         let
+           glyphYaml :: Either e v = decoder $ getGlyphText plane r
+         in
+         (\gy -> (r, gy, getGlyphPorts plane r)) <$> glyphYaml
       ) <$> glyphRects
 
-    labeledGlyphs :: [(GlyphId, GlyphContent)] =
-      (\(rect, bindings, ports) ->
-          let
-            gid =
-              maybe
-                (GlyphRect rect)
-                GlyphId
-                (Map.lookup "id" bindings)
-          in
-          (gid, GlyphContent bindings ports rect)
+    eitherLabeledGlyphs :: [Either e (GlyphId, GlyphContent v)] =
+      (fmap
+        (\(rect, bindings, ports) ->
+           let
+             gid =
+               maybe
+                 (GlyphRect rect)
+                 GlyphId
+                 (getId bindings)
+           in
+           (gid, GlyphContent bindings ports rect)
+        )
       ) <$> rawGlyphs
 
-    glyphPorts :: [((Int,Int), GlyphContent, GlyphVertex)] =
+    (lgErrors, labeledGlyphs) = partitionEithers eitherLabeledGlyphs
+
+    glyphPorts :: [((Int,Int), GlyphContent v, GlyphVertex)] =
       concat $
         (\(gid, gc@GlyphContent {..}) ->
            let
@@ -345,7 +380,10 @@ getDrawing plane =
 
     glyphNets = createNets plane glyphPorts
   in
-  GlyphDrawing
-    { glyphs = Map.fromList labeledGlyphs
-    , nets = glyphNets
-    }
+  if null lgErrors then
+    Right $ GlyphDrawing
+      { glyphs = Map.fromList labeledGlyphs
+      , nets = glyphNets
+      }
+  else
+    Left lgErrors
