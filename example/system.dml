@@ -5,11 +5,11 @@
 |   basic:                 |
 `--------------------------'
 
-,-----------------------------.
-| id: couchdb0                |
-| machine: couchdb            C---+
-| couchdb.port.external: 5985 |   |
-`-----------------------------'   |
+,-----------------------------------.
+| id: couchdb0                      |
+| machine: couchdb                  |
+| http-listener.port.external: 5985 |
+`---------------------------------C-'
                                   | 
 ,--------------------------.      |
 | id: orderer.mydomain.com |      |

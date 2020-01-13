@@ -576,7 +576,7 @@ emitPortIfDefined Machine {..} name v =
         Aeson.String s -> Just $ Text.unpack s
   in
   (\sp ->
-      ((\MachineDefListenPort {..} -> show mdpInternal ++ ":" ++ sp) . fst) <$>
+      ((\MachineDefListenPort {..} -> sp ++ ":" ++ show mdpInternal) . fst) <$>
       List.uncons
       (filter (\MachineDefListenPort {..} -> mdpName == name) $ Map.elems mListenPorts)
   ) =<< stringedPort
