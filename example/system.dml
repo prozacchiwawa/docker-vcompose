@@ -21,5 +21,5 @@
 ,------------o----------------.   |
 | id: peer0.org1.mydomain.com |   |
 | machine: peer               c---+
-| peer.port.external: 7050    |
+| peer.port.external: 7051    |
 `------------P----------------'

@@ -12,6 +12,7 @@ module Docker.System
 where
 
 import GHC.Generics
+import Debug.Trace
 
 import qualified Control.Error.Util as CE
 import Control.Monad
@@ -71,17 +72,24 @@ data MachineDef = MachineDef
   }
   deriving (Show, Eq, Ord)
 
-data MachineConnectPort = MachineConnectPort
-  {
+data MachineConnTarget m = MachineConnTarget
+  { mctTargetMachine :: m
+  , mctTargetListener :: MachineDefListenPort
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
+
+data MachineConn a = MachineConn
+  { mcDefinition :: MachineDefConn
+  , mcTarget :: Maybe (MachineConnTarget a)
+  }
+  deriving (Show, Eq, Ord)
 
 data Machine = Machine
   { mName :: String
   , mNetwork :: String
-  , mListenPorts :: [MachineDefListenPort]
-  , mConnectPorts :: [MachineConnectPort]
-  , mMounts :: [(MachineDefMount)]
+  , mListenPorts :: Map Char MachineDefListenPort
+  , mConnectPorts :: Map Char (MachineConn Machine)
+  , mMounts :: Map Char MachineDefMount
   }
   deriving (Show, Eq)
 
@@ -297,6 +305,15 @@ getDefaultNetwork (Aeson.Array a) =
   CE.note "networks array was empty or not array of strings" $ unstring =<< a Vector.!? 0
 getDefaultNetwork _ = Left "networks yaml isn't an array"
 
+data InProgressConnectionType
+  = IsListenPort Machine GlyphVertex MachineDefListenPort
+  | IsOutbound Machine GlyphVertex (MachineConn Machine)
+  deriving (Show, Eq)
+
+matchesListenPort :: InProgressConnectionType -> Bool
+matchesListenPort (IsListenPort _ _ _) = True
+matchesListenPort _ = False
+
 assembleSystem
   :: GlyphDrawing Aeson.Value
   -> DockerSystemYaml
@@ -354,9 +371,9 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
         , Machine
             { mName = machineName
             , mNetwork = useNetwork
-            , mListenPorts = Map.elems $ mdPorts lookedUpMachine
-            , mConnectPorts = []
-            , mMounts = []
+            , mListenPorts = mdPorts lookedUpMachine
+            , mConnectPorts = (\m -> MachineConn m Nothing) <$> mdConnections lookedUpMachine
+            , mMounts = Map.empty
             }
         )
 
@@ -368,24 +385,121 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
       machname <- getTopLevelBinding "machine" gData
       pure (gid, gc, machname)
 
+    getConnectionType
+      :: Map GlyphId Machine
+      -> GlyphVertex
+      -> Either String InProgressConnectionType
+    getConnectionType machines gvtx@(GlyphVertex {..}) = do
+      machine <-
+        CE.note ("machine lookup failed for glyph id " ++ show toGlyph) $
+        Map.lookup toGlyph machines
+
+      let
+        connectionAmongListen = Map.lookup conn $ mListenPorts machine
+        connectionAmongOutbound = Map.lookup conn $ mConnectPorts machine
+
+      case (connectionAmongListen, connectionAmongOutbound) of
+        (Just listen, Just outbound) ->
+          Left $ "Problem: same letter is used for listen and outbound " ++ show gvtx
+        (Just listen, _) -> Right $ IsListenPort machine gvtx listen
+        (_, Just outbound) -> Right $ IsOutbound machine gvtx outbound
+        _ -> Left $ "Problem: no letter matching " ++ show gvtx
+
+    getConnectionTypeList
+      :: Map GlyphId Machine
+      -> [GlyphVertex]
+      -> Either String [InProgressConnectionType]
+    getConnectionTypeList machines =
+      foldM
+        (\lst vtx -> do
+          resultType <- getConnectionType machines vtx
+          pure $ resultType : lst
+        ) []
+
+    protocolSupersetsOther :: NetProto -> NetProto -> Bool
+    protocolSupersetsOther npa npb = npa == npb || Set.member npb (npSpecializes npa)
+
+    addConnectionToMachine :: Char -> Machine -> MachineDefListenPort -> Machine -> Machine
+    addConnectionToMachine portlabel targetMachine targetListenPort m@(Machine {..}) =
+      let
+        newConnectPorts =
+          Map.update
+            (\mc ->
+               Just $ mc { mcTarget = Just $ MachineConnTarget targetMachine targetListenPort }
+            )
+            portlabel
+            mConnectPorts
+      in
+      m { mConnectPorts = newConnectPorts }
+
+    setOutboundConnection
+      :: String -> Char -> Machine -> MachineDefListenPort -> DockerSystem -> DockerSystem
+    setOutboundConnection machname portlabel targetMachine targetListenPort system@(DockerSystem {..}) =
+      let
+        machines =
+          Map.update
+            (Just . addConnectionToMachine portlabel targetMachine targetListenPort)
+            machname
+            dsMachineInstances
+      in
+      system { dsMachineInstances = machines }
+
+    replaceConnection
+      :: InProgressConnectionType
+      -> DockerSystem
+      -> InProgressConnectionType
+      -> Either String DockerSystem
+    replaceConnection l@(IsOutbound _ _ _) s o =
+      Left $ "Outbound connection " ++ show l ++ " is targeted by " ++ show o
+    replaceConnection l s o@(IsListenPort _ _ _) =
+      Left $ "Inbound connection " ++ show o ++ " is asked to connect to " ++ show l
+    replaceConnection l@(IsListenPort lmachine lvtx lport) system o@(IsOutbound omachine ovtx odef) =
+      if protocolSupersetsOther (mdpProtocol lport) (mdcProtocol $ mcDefinition odef) then
+        Right $ setOutboundConnection
+          (mName omachine) (mdcChar $ mcDefinition odef) lmachine lport system
+      else
+        Left $ "Incompatible " ++ show o ++ " asked to connect to " ++ show l
+
+    replaceConnections
+      :: InProgressConnectionType
+      -> DockerSystem
+      -> [InProgressConnectionType]
+      -> Either String DockerSystem
+    replaceConnections l = foldM (replaceConnection l)
+
     performConnection
       :: GlyphDrawing Aeson.Value
       -> Map GlyphId Machine
-      -> GlyphId
       -> GlyphContent Aeson.Value
       -> DockerSystem
       -> (GlyphVertex, Set GlyphVertex)
       -> Either String DockerSystem
-    performConnection drawing machineByGlyph gid gc@GlyphContent {..} system (gvtx@GlyphVertex {..}, connectedTo) = do
+    performConnection drawing machineByGlyph gc@GlyphContent {..} system (gvtx@GlyphVertex {..}, connectedTo) = do
       firstMachine <-
-        CE.note ("Lookup failed for glyph id (to) " ++ show gid) $
-        Map.lookup gid machineByGlyph
-
-      secondMachine <-
-        CE.note ("Lookup failed for glyph id " ++ show toGlyph) $
+        CE.note ("Lookup failed for glyph id (to) " ++ show toGlyph) $
         Map.lookup toGlyph machineByGlyph
 
-      undefined
+      typeAtOrigin <- getConnectionType machineByGlyph gvtx
+      connTypeList <- getConnectionTypeList machineByGlyph $ Set.toList connectedTo
+
+      let
+        allConnected = typeAtOrigin : connTypeList
+
+        -- Check for more than one listener
+        connectedListeners = filter matchesListenPort allConnected
+        connectedOutbounds = filter (not . matchesListenPort) allConnected
+
+        unconsListener = List.uncons connectedListeners
+
+      listener <-
+         case unconsListener of
+           Just (l, []) -> Right l
+           Just (_, _) ->
+             Left $ "More than one listener is in net " ++ show gvtx ++ " with " ++ show connectedTo
+           _ ->
+             Left $ "Each net must have one listener " ++ show gvtx ++ " with " ++ show connectedTo
+
+      replaceConnections listener system connectedOutbounds
 
     performConnections
       :: GlyphDrawing Aeson.Value
@@ -394,5 +508,5 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
       -> (GlyphId, GlyphContent Aeson.Value)
       -> Either String DockerSystem
     performConnections drawing@GlyphDrawing {..} machineByGlyph system (gid, gc@GlyphContent {..}) =
-      foldM (performConnection drawing machineByGlyph gid gc) system $
-      Map.toList nets
+      foldM (performConnection drawing machineByGlyph gc) system $
+      filter (\(vtx,conns) -> toGlyph vtx == gid) $ Map.toList nets
