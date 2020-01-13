@@ -123,7 +123,7 @@ main = do
 
         sysdef <- ExceptT $ pure $ assembleSystem drawing system machines protocols
 
-        sysyaml <- ExceptT $ pure $ createSystemYaml sysdef
+        sysyaml <- ExceptT $ pure $ createSystemYaml drawing sysdef
 
         pure sysyaml
 

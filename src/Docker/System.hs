@@ -88,6 +88,7 @@ data MachineConn a = MachineConn
 data Machine = Machine
   { mName :: String
   , mTemplate :: Aeson.Value
+  , mGlyphData :: Aeson.Value
   , mNetwork :: String
   , mListenPorts :: Map Char MachineDefListenPort
   , mConnectPorts :: Map Char (MachineConn Machine)
@@ -371,6 +372,7 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
         , Machine
             { mName = machineName
             , mTemplate = mdTemplate lookedUpMachine
+            , mGlyphData = gData
             , mNetwork = useNetwork
             , mListenPorts = mdPorts lookedUpMachine
             , mConnectPorts = (\m -> MachineConn m Nothing) <$> mdConnections lookedUpMachine
@@ -512,16 +514,33 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
       foldM (performConnection drawing machineByGlyph gc) system $
       filter (\(vtx,conns) -> toGlyph vtx == gid) $ Map.toList nets
 
-machineToServiceEntry :: Machine -> Aeson.Value
-machineToServiceEntry Machine {..} =
-  mTemplate
+queryVariableFromMachine :: Machine -> String -> Maybe String
+queryVariableFromMachine Machine {..} ident =
+  case getTopLevelBinding ident mGlyphData of
+    Just v -> Just v
+    _ -> Nothing
 
-createSystemYaml :: DockerSystem -> Either String Aeson.Value
-createSystemYaml system@(DockerSystem {..}) =
+machineToServiceEntry :: Machine -> Aeson.Value
+machineToServiceEntry m =
+  identifyCheckReplaceVariables (queryVariableFromMachine m) (mTemplate m)
+
+createSystemYaml :: GlyphDrawing Aeson.Value -> DockerSystem -> Either String Aeson.Value
+createSystemYaml gd system@(DockerSystem {..}) =
   let
     machineInstances = Map.elems dsMachineInstances
+
     services = Aeson.Array $ Vector.fromList $ machineToServiceEntry <$> machineInstances
+
+    networks =
+      either
+        (const $ Aeson.Array $ Vector.fromList [Aeson.String $ Text.pack "basic"])
+        id
+        (getNetworkYaml gd)
+
     baseYaml = emptyObject
   in
 
-  pure $ addKey "services" services $ addKey "version" (Aeson.String $ Text.pack "2") $ baseYaml
+  pure $
+    addKey "services" services $
+    addKey "networks" networks $
+    addKey "version" (Aeson.String $ Text.pack "2") $ baseYaml
