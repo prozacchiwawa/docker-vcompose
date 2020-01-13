@@ -13,7 +13,6 @@ module Docker.System
 where
 
 import GHC.Generics
-import Debug.Trace
 
 import qualified Control.Error.Util as CE
 import Control.Monad
@@ -297,12 +296,7 @@ getNetworkYaml gd@GlyphDrawing {..} = do
     CE.note "No glyph exists with networks key" $
     List.uncons $
     catMaybes $
-    (\(gid,gc@GlyphContent {..}) ->
-       let
-         nt = getTopLevelValue "networks" $ trace ("gData " ++ show gData) gData
-       in
-       trace ("networks " ++ show nt) nt
-    ) <$> Map.toList glyphs
+    (\(gid,gc@GlyphContent {..}) -> getTopLevelValue "networks" gData) <$> Map.toList glyphs
 
   if null tl then
     pure networks
@@ -372,7 +366,7 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
         CE.note ("No id given for machine " ++ show gid) $
         getTopLevelBinding "id" gData
       networkYaml <- getNetworkYaml gd
-      useNetwork <- getDefaultNetwork $ trace ("networkYaml " ++ show networkYaml) networkYaml
+      useNetwork <- getDefaultNetwork networkYaml
 
       pure $
         ( gid
@@ -572,16 +566,21 @@ makeDependsSet m =
 machineToServiceEntry :: GlyphDrawing Aeson.Value -> Machine -> Aeson.Value
 machineToServiceEntry gd m =
   let
+    netYaml = getNetworkYaml gd
     networks =
       either
         (const $ Aeson.Array $ Vector.fromList [Aeson.String $ Text.pack "basic"])
-        id
-        (getNetworkYaml gd)
+        (Aeson.Array . Vector.fromList . fmap (Aeson.String . Text.pack))
+        (keysOfDict =<< netYaml)
   in
   identifyCheckReplaceVariables (queryVariableFromMachine m) $
     addKey "networks" networks $
     addKey "depends_on" (makeDependsSet m) $
     mTemplate m
+
+  where
+    keysOfDict (Aeson.Object o) = Right $ Text.unpack <$> HashMap.keys o
+    keysOfDict _ = Left "No keys in non-object"
 
 createSystemYaml :: GlyphDrawing Aeson.Value -> DockerSystem -> Either String Aeson.Value
 createSystemYaml gd system@(DockerSystem {..}) =
