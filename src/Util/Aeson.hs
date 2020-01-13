@@ -2,6 +2,8 @@ module Util.Aeson
   ( unstring
   , getTopLevelValue
   , getTopLevelBinding
+  , addKey
+  , emptyObject
   )
 where
 
@@ -19,3 +21,10 @@ getTopLevelValue _ _ = Nothing
 
 getTopLevelBinding :: String -> Aeson.Value -> Maybe String
 getTopLevelBinding name v = unstring =<< getTopLevelValue name v
+
+addKey :: String -> Aeson.Value -> Aeson.Value -> Aeson.Value
+addKey name v (Aeson.Object o) = Aeson.Object $ HashMap.insert (Text.pack name) v o
+addKey _ _ v = v
+
+emptyObject :: Aeson.Value
+emptyObject = Aeson.Object HashMap.empty

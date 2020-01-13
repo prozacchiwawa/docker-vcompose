@@ -8,6 +8,7 @@ module Docker.System
   , realizeProtocolDefs
   , realizeMachineDefs
   , assembleSystem
+  , createSystemYaml
   )
 where
 
@@ -65,12 +66,12 @@ data MachineDefConn = MachineDefConn
 
 data MachineDef = MachineDef
   { mdName :: String
-  , mdTemplate :: String
+  , mdTemplate :: Aeson.Value
   , mdPorts :: Map Char MachineDefListenPort
   , mdConnections :: Map Char MachineDefConn
   , mdMounts :: Map Char MachineDefMount
   }
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq)
 
 data MachineConnTarget m = MachineConnTarget
   { mctTargetMachine :: m
@@ -86,6 +87,7 @@ data MachineConn a = MachineConn
 
 data Machine = Machine
   { mName :: String
+  , mTemplate :: Aeson.Value
   , mNetwork :: String
   , mListenPorts :: Map Char MachineDefListenPort
   , mConnectPorts :: Map Char (MachineConn Machine)
@@ -94,8 +96,7 @@ data Machine = Machine
   deriving (Show, Eq)
 
 data DockerSystem = DockerSystem
-  { dsBaseYaml :: Aeson.Value
-  , dsMachineDefs :: Map String MachineDef
+  { dsMachineDefs :: Map String MachineDef
   , dsProtocols :: Map String NetProto
   , dsDrawing :: GlyphDrawing Aeson.Value
   , dsMachineInstances :: Map String Machine
@@ -150,8 +151,7 @@ data MachineDefYaml = MachineDefYaml
 instance Aeson.FromJSON MachineDefYaml
 
 data DockerSystemYaml = DockerSystemYaml
-  { dsyBaseYaml :: String
-  , dsySourceDirs :: [String]
+  { dsySourceDirs :: [String]
   }
   deriving (Show, Generic)
 
@@ -223,18 +223,20 @@ realizeMachineDef protos defs machname =
         )
         (Map.lookup ncpyProtocol protos)
 
-    yamlToRealMachine MachineDefYaml {..} =
+    yamlToRealMachine MachineDefYaml {..} = do
       let
         (lpErrors, listenPorts) =
           partitionEithers $ realizeListenPort <$> mdyListenPorts
 
         (cpErrors, connectPorts) =
           partitionEithers $ realizeConnectPort <$> mdyConnectPorts
-      in
+
+      parsedYaml <- parseYaml mdyBaseYaml
+
       if null lpErrors && null cpErrors then
         Right $ MachineDef
           { mdName = machname
-          , mdTemplate = mdyBaseYaml
+          , mdTemplate = parsedYaml
           , mdPorts =
               Map.fromList $
                 (\mdlp@MachineDefListenPort {..} -> (mdpChar, mdlp)) <$> listenPorts
@@ -321,7 +323,6 @@ assembleSystem
   -> Map String NetProto
   -> Either String DockerSystem
 assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
-  parsedBaseYaml <- parseYaml dsyBaseYaml
   networkYaml <- getNetworkYaml gd
 
   let
@@ -332,8 +333,7 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
     let
       basicSystem =
         DockerSystem
-          { dsBaseYaml = parsedBaseYaml
-          , dsMachineDefs = machines
+          { dsMachineDefs = machines
           , dsProtocols = protos
           , dsDrawing = gd
           , dsMachineInstances =
@@ -370,6 +370,7 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
         ( gid
         , Machine
             { mName = machineName
+            , mTemplate = mdTemplate lookedUpMachine
             , mNetwork = useNetwork
             , mListenPorts = mdPorts lookedUpMachine
             , mConnectPorts = (\m -> MachineConn m Nothing) <$> mdConnections lookedUpMachine
@@ -510,3 +511,17 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
     performConnections drawing@GlyphDrawing {..} machineByGlyph system (gid, gc@GlyphContent {..}) =
       foldM (performConnection drawing machineByGlyph gc) system $
       filter (\(vtx,conns) -> toGlyph vtx == gid) $ Map.toList nets
+
+machineToServiceEntry :: Machine -> Aeson.Value
+machineToServiceEntry Machine {..} =
+  mTemplate
+
+createSystemYaml :: DockerSystem -> Either String Aeson.Value
+createSystemYaml system@(DockerSystem {..}) =
+  let
+    machineInstances = Map.elems dsMachineInstances
+    services = Aeson.Array $ Vector.fromList $ machineToServiceEntry <$> machineInstances
+    baseYaml = emptyObject
+  in
+
+  pure $ addKey "services" services $ addKey "version" (Aeson.String $ Text.pack "2") $ baseYaml

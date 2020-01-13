@@ -1,5 +1,6 @@
 module Main where
 
+import Control.Exception
 import Control.Monad.Trans.Except
 
 import qualified Data.Aeson as Aeson
@@ -19,6 +20,9 @@ import Docker.Drawing
 import Docker.System
 import Util.CharPlane
 import Util.Glyph
+
+data FailedToAssembleException = FailedToAssembleException String deriving (Show)
+instance Exception FailedToAssembleException
 
 getSourceFileNames :: String -> [String] -> IO [String]
 getSourceFileNames ext dirs =
@@ -119,8 +123,14 @@ main = do
 
         sysdef <- ExceptT $ pure $ assembleSystem drawing system machines protocols
 
-        pure sysdef
+        sysyaml <- ExceptT $ pure $ createSystemYaml sysdef
 
-      putStrLn $ show result
+        pure sysyaml
+
+      either
+         (throwIO . FailedToAssembleException)
+         (putStrLn . Text.unpack . Text.decodeUtf8 . Yaml.encode)
+         result
+
     _ -> do
       putStrLn "Usage: vcompose [drawing]"
