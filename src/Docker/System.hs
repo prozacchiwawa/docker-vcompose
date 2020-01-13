@@ -26,6 +26,7 @@ import qualified Data.List.Split as List
 import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Maybe
+import Data.Scientific
 import qualified Data.Set as Set
 import Data.Set (Set)
 import qualified Data.Text as Text
@@ -47,7 +48,6 @@ data MachineDefListenPort = MachineDefListenPort
   , mdpChar :: Char
   , mdpProtocol :: NetProto
   , mdpInternal :: Int
-  , mdpExternal :: Maybe Int
   }
   deriving (Show, Eq, Ord)
 
@@ -118,7 +118,6 @@ data NetListenPortYaml = NetListenPortYaml
   , nlpyLabel :: String
   , nlpyProtocol :: String
   , nlpyPort :: Int
-  , nlpyDefaultHostPort :: Maybe Int
   }
   deriving (Show, Generic)
 
@@ -202,7 +201,6 @@ realizeMachineDef protos defs machname =
                  , mdpChar = ch
                  , mdpProtocol = np
                  , mdpInternal = nlpyPort
-                 , mdpExternal = nlpyDefaultHostPort
                  }
              _ ->
                Left $ "Label must be 1 char long in port definition " ++ nlpyName ++ " machine " ++ machname
@@ -563,6 +561,43 @@ makeDependsSet m =
   in
   Aeson.Array $ Vector.fromList $ (Aeson.String . Text.pack) <$> Set.toList depSet
 
+-- | If an external port is defined in the glyph yaml that matches a listen port we have,
+-- give a string that maps it to the port indicated.
+emitPortIfDefined :: Machine -> String -> Aeson.Value -> Maybe String
+emitPortIfDefined Machine {..} name v =
+  let
+    stringedPort =
+      case v of
+        Aeson.Number n ->
+          let
+            i :: Maybe Int = toBoundedInteger n
+          in
+          show <$> i
+        Aeson.String s -> Just $ Text.unpack s
+  in
+  (\sp ->
+      ((\MachineDefListenPort {..} -> show mdpInternal ++ ":" ++ sp) . fst) <$>
+      List.uncons
+      (filter (\MachineDefListenPort {..} -> mdpName == name) $ Map.elems mListenPorts)
+  ) =<< stringedPort
+
+makeExternalPorts :: Machine -> Aeson.Value -> Aeson.Value
+makeExternalPorts m v =
+  let
+    keys = either (const []) id $ keysOfDict v
+  in
+  Aeson.Array $ Vector.fromList $
+    (Aeson.String . Text.pack) <$>
+    catMaybes
+      (
+        (\key ->
+           case List.splitOn "." key of
+             [name,"port","external"] ->
+               emitPortIfDefined m name =<< getTopLevelValue key v
+             _ -> Nothing
+        ) <$> keys
+      )
+
 machineToServiceEntry :: GlyphDrawing Aeson.Value -> Machine -> Aeson.Value
 machineToServiceEntry gd m =
   let
@@ -576,6 +611,7 @@ machineToServiceEntry gd m =
   identifyCheckReplaceVariables (queryVariableFromMachine m) $
     addKey "networks" networks $
     addKey "depends_on" (makeDependsSet m) $
+    addKey "ports" (makeExternalPorts m $ mGlyphData m) $
     mTemplate m
 
 createSystemYaml :: GlyphDrawing Aeson.Value -> DockerSystem -> Either String Aeson.Value

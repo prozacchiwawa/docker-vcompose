@@ -32,6 +32,7 @@ dependencies:
 - directory
 - errors
 - filepath
+- scientific
 - split
 - text
 - transformers
