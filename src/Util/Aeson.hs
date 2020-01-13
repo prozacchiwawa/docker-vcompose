@@ -3,6 +3,7 @@ module Util.Aeson
   , getTopLevelValue
   , getTopLevelBinding
   , addKey
+  , keysOfDict
   , emptyObject
   , identifyCheckReplaceVariables
   )
@@ -59,3 +60,6 @@ identifyCheckReplaceVariables getReplacement (Aeson.Array a) =
   Aeson.Array $ (identifyCheckReplaceVariables getReplacement) <$> a
 identifyCheckReplaceVariables getReplacement v = v
 
+keysOfDict :: Aeson.Value -> Either String [String]
+keysOfDict (Aeson.Object o) = Right $ Text.unpack <$> HashMap.keys o
+keysOfDict _ = Left "No keys in non-object"

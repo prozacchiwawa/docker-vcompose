@@ -578,10 +578,6 @@ machineToServiceEntry gd m =
     addKey "depends_on" (makeDependsSet m) $
     mTemplate m
 
-  where
-    keysOfDict (Aeson.Object o) = Right $ Text.unpack <$> HashMap.keys o
-    keysOfDict _ = Left "No keys in non-object"
-
 createSystemYaml :: GlyphDrawing Aeson.Value -> DockerSystem -> Either String Aeson.Value
 createSystemYaml gd system@(DockerSystem {..}) =
   let
