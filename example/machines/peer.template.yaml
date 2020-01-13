@@ -16,9 +16,6 @@ environment:
   # match the username and password set for the associated CouchDB.
   - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=
   - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=
-depends_on:
-  - ${couchdb.id}
-  - ${orderer.id}
 working_dir: /opt/gopath/src/github.com/hyperledger/fabric
 command: peer node start
 volumes:

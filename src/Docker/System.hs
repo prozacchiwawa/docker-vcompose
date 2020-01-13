@@ -21,7 +21,9 @@ import Control.Monad.Trans.Except
 
 import qualified Data.Aeson as Aeson
 import Data.Either
+import qualified Data.HashMap.Strict as HashMap
 import qualified Data.List as List
+import qualified Data.List.Split as List
 import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Maybe
@@ -295,8 +297,12 @@ getNetworkYaml gd@GlyphDrawing {..} = do
     CE.note "No glyph exists with networks key" $
     List.uncons $
     catMaybes $
-    (\(gid,gc@GlyphContent {..}) -> getTopLevelValue "networks" gData) <$>
-      Map.toList glyphs
+    (\(gid,gc@GlyphContent {..}) ->
+       let
+         nt = getTopLevelValue "networks" $ trace ("gData " ++ show gData) gData
+       in
+       trace ("networks " ++ show nt) nt
+    ) <$> Map.toList glyphs
 
   if null tl then
     pure networks
@@ -304,9 +310,10 @@ getNetworkYaml gd@GlyphDrawing {..} = do
     Left "Multiple glyphs have a toplevel networks key"
 
 getDefaultNetwork :: Aeson.Value -> Either String String
-getDefaultNetwork (Aeson.Array a) =
-  CE.note "networks array was empty or not array of strings" $ unstring =<< a Vector.!? 0
-getDefaultNetwork _ = Left "networks yaml isn't an array"
+getDefaultNetwork (Aeson.Object o) =
+  CE.note "networks array was empty or not array of strings" $
+  (Text.unpack . fst) <$> List.uncons (HashMap.keys o)
+getDefaultNetwork _ = Left "networks yaml isn't an object"
 
 data InProgressConnectionType
   = IsListenPort Machine GlyphVertex MachineDefListenPort
@@ -365,7 +372,7 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
         CE.note ("No id given for machine " ++ show gid) $
         getTopLevelBinding "id" gData
       networkYaml <- getNetworkYaml gd
-      useNetwork <- getDefaultNetwork networkYaml
+      useNetwork <- getDefaultNetwork $ trace ("networkYaml " ++ show networkYaml) networkYaml
 
       pure $
         ( gid
@@ -515,25 +522,80 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
       filter (\(vtx,conns) -> toGlyph vtx == gid) $ Map.toList nets
 
 queryVariableFromMachine :: Machine -> String -> Maybe String
-queryVariableFromMachine Machine {..} ident =
-  case getTopLevelBinding ident mGlyphData of
+queryVariableFromMachine m ident =
+  case getTopLevelBinding ident (mGlyphData m) of
     Just v -> Just v
-    _ -> Nothing
+    _ ->
+      let
+        splitOnDots = List.splitOn "." ident
+      in
+      case splitOnDots of
+        [listener,"port","internal"] ->
+          (show . mdpInternal . fst) <$>
+          (List.uncons $
+            filter (\MachineDefListenPort {..} -> mdpName == listener) $
+            Map.elems $ mListenPorts m)
 
-machineToServiceEntry :: Machine -> Aeson.Value
-machineToServiceEntry m =
-  identifyCheckReplaceVariables (queryVariableFromMachine m) (mTemplate m)
+        [connect,"port"] ->
+          let
+            defs =
+              filter (\MachineConn {..} -> mdcName mcDefinition == connect) $
+              Map.elems $ mConnectPorts m
+          in
+          (show . mdpInternal) <$>
+          (mctTargetListener <$>
+           (mcTarget =<<
+            fst <$>
+            (List.uncons defs)
+           )
+          )
+
+        [connect,"host"] ->
+          ((mName . mctTargetMachine) <$>
+            (mcTarget =<<
+             fst <$>
+             (List.uncons $
+              filter (\MachineConn {..} -> mdcName mcDefinition == connect) $
+              Map.elems $ mConnectPorts m)
+            )
+          )
+
+        _ -> Nothing
+
+makeDependsSet :: Machine -> Aeson.Value
+makeDependsSet m =
+  let
+    depSet = Set.fromList $ (\MachineConnTarget {..} -> mName mctTargetMachine) <$> catMaybes (mcTarget <$> Map.elems (mConnectPorts m))
+  in
+  Aeson.Array $ Vector.fromList $ (Aeson.String . Text.pack) <$> Set.toList depSet
+
+machineToServiceEntry :: GlyphDrawing Aeson.Value -> Machine -> Aeson.Value
+machineToServiceEntry gd m =
+  let
+    networks =
+      either
+        (const $ Aeson.Array $ Vector.fromList [Aeson.String $ Text.pack "basic"])
+        id
+        (getNetworkYaml gd)
+  in
+  identifyCheckReplaceVariables (queryVariableFromMachine m) $
+    addKey "networks" networks $
+    addKey "depends_on" (makeDependsSet m) $
+    mTemplate m
 
 createSystemYaml :: GlyphDrawing Aeson.Value -> DockerSystem -> Either String Aeson.Value
 createSystemYaml gd system@(DockerSystem {..}) =
   let
     machineInstances = Map.elems dsMachineInstances
 
-    services = Aeson.Array $ Vector.fromList $ machineToServiceEntry <$> machineInstances
+    services =
+      Aeson.Object $
+      HashMap.fromList $
+      (\m -> (Text.pack (mName m), machineToServiceEntry gd m)) <$> machineInstances
 
     networks =
       either
-        (const $ Aeson.Array $ Vector.fromList [Aeson.String $ Text.pack "basic"])
+        (const $ Aeson.Object $ HashMap.fromList $ [(Text.pack "basic", emptyObject)])
         id
         (getNetworkYaml gd)
 

@@ -41,7 +41,7 @@ doStringReplacements getReplacement ('$':'{':tl) =
   in
   maybe
     ('$':'{':doStringReplacements getReplacement tl)
-    ((++) $ doStringReplacements getReplacement restOfString)
+    (\str -> str ++ doStringReplacements getReplacement restOfString)
     (getReplacement varname)
 doStringReplacements getReplacement (hd:tl) = hd:doStringReplacements getReplacement tl
 

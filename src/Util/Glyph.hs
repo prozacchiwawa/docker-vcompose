@@ -188,10 +188,7 @@ detectGlyphs plane (coord:coords) =
 
 trim :: String -> String
 trim str =
-  let
-    tb = dropWhile Char.isSpace str
-  in
-  reverse $ dropWhile Char.isSpace $ reverse tb
+  reverse $ dropWhile Char.isSpace $ reverse str
 
 leastColumn :: String -> Maybe Int
 leastColumn [] = Nothing
