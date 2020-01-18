@@ -32,33 +32,38 @@ addKey _ _ v = v
 emptyObject :: Aeson.Value
 emptyObject = Aeson.Object HashMap.empty
 
-doStringReplacements :: (String -> Maybe String) -> String -> String
-doStringReplacements getReplacement [] = []
-doStringReplacements getReplacement ('$':'$':tl) = '$':doStringReplacements getReplacement tl
-doStringReplacements getReplacement ('$':'{':tl) =
+doStringReplacements :: (String -> Either String String) -> String -> Either String String
+doStringReplacements getReplacement [] = Right []
+doStringReplacements getReplacement ('$':'$':tl) =
+  ('$':) <$> doStringReplacements getReplacement tl
+doStringReplacements getReplacement ('$':'{':tl) = do
   let
     varname = takeWhile ((/=) '}') tl
     restOfString = List.drop 1 $ List.dropWhile ((/=) '}') tl
-  in
-  maybe
-    ('$':'{':doStringReplacements getReplacement tl)
-    (\str -> str ++ doStringReplacements getReplacement restOfString)
-    (getReplacement varname)
-doStringReplacements getReplacement (hd:tl) = hd:doStringReplacements getReplacement tl
 
-identifyCheckReplaceVariables :: (String -> Maybe String) -> Aeson.Value -> Aeson.Value
+  newPrefix <- getReplacement varname
+  newSuffix <- doStringReplacements getReplacement restOfString
+  pure $ newPrefix ++ newSuffix
+
+doStringReplacements getReplacement (hd:tl) =
+  (hd:) <$> doStringReplacements getReplacement tl
+
+identifyCheckReplaceVariables
+  :: (String -> Either String String) -> Aeson.Value -> Either String Aeson.Value
 identifyCheckReplaceVariables getReplacement (Aeson.String t) =
   let
     s = Text.unpack t
     replaced = doStringReplacements getReplacement s
   in
-  Aeson.String $ Text.pack replaced
+  (Aeson.String . Text.pack) <$> replaced
 
-identifyCheckReplaceVariables getReplacement (Aeson.Object o) =
-  Aeson.Object $ (identifyCheckReplaceVariables getReplacement) <$> o
-identifyCheckReplaceVariables getReplacement (Aeson.Array a) =
-  Aeson.Array $ (identifyCheckReplaceVariables getReplacement) <$> a
-identifyCheckReplaceVariables getReplacement v = v
+identifyCheckReplaceVariables getReplacement (Aeson.Object o) = do
+  replacementValues <- traverse (identifyCheckReplaceVariables getReplacement) o
+  pure $ Aeson.Object replacementValues
+identifyCheckReplaceVariables getReplacement (Aeson.Array a) = do
+  replacementValues <- traverse (identifyCheckReplaceVariables getReplacement) a
+  pure $ Aeson.Array replacementValues
+identifyCheckReplaceVariables getReplacement v = pure v
 
 keysOfDict :: Aeson.Value -> Either String [String]
 keysOfDict (Aeson.Object o) = Right $ Text.unpack <$> HashMap.keys o

@@ -44,7 +44,7 @@ library:
   source-dirs: src
 
 executables:
-  vcompose-exe:
+  vcompose:
     main:                Main.hs
     source-dirs:         app
     ghc-options:

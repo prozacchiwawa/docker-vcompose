@@ -5,10 +5,6 @@
   npySpecializes:
     - tcp
 
-- npyName: "banyan-smart-contract-interface-http"
-  npySpecializes:
-    - http
-
 - npyName: "couchdb"
   npySpecializes:
     - http

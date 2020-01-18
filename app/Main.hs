@@ -1,6 +1,7 @@
 module Main where
 
 import Control.Exception
+import Control.Monad
 import Control.Monad.Trans.Except
 
 import qualified Data.Aeson as Aeson
@@ -23,6 +24,68 @@ import Util.Glyph
 
 data FailedToAssembleException = FailedToAssembleException String deriving (Show)
 instance Exception FailedToAssembleException
+
+data ParseState
+  = EmptyParseState
+  | GotDoubleDash
+  deriving (Show)
+
+data ParseArguments = ParseArguments
+  { parseState :: ParseState
+  , parseDrawingPath :: Maybe String
+  , parseVariables :: Map String String
+  }
+  deriving (Show)
+
+data ParsedArguments = ParsedArguments
+  { parsedDrawingPath :: String
+  , parsedVariables :: Map String String
+  }
+
+parseArguments :: [String] -> Either String ParsedArguments
+parseArguments args = do
+  result <- foldM parseArg (ParseArguments EmptyParseState Nothing Map.empty) args
+  maybe
+    (Left "No drawing file specified")
+    (\dpath ->
+        Right $ ParsedArguments
+          { parsedDrawingPath = dpath
+          , parsedVariables = parseVariables result
+          }
+    )
+    (parseDrawingPath result)
+
+  where
+    parseArg :: ParseArguments -> String -> Either String ParseArguments
+    parseArg pa@ParseArguments {..} arg = do
+      case parseState of
+        EmptyParseState ->
+          if List.isPrefixOf "-D" arg then
+            parseAsVariable (drop 2 arg) pa
+          else if arg == "--" then
+            Right $ pa { parseState = GotDoubleDash }
+          else
+            takeDrawingPath arg pa
+
+        GotDoubleDash -> takeDrawingPath arg pa
+
+    parseAsVariable :: String -> ParseArguments -> Either String ParseArguments
+    parseAsVariable arg pa =
+      let
+        (varname, varval) =
+          (List.takeWhile ((/=) '=') arg, List.dropWhile ((/=) '=') arg)
+      in
+      if List.isPrefixOf "=" varval then
+        Right $ pa { parseVariables = Map.insert varname (List.drop 1 varval) (parseVariables pa) }
+      else
+        Left $ "Command line bindings require an = (so empty ones are explicitly empty)"
+
+    takeDrawingPath :: String -> ParseArguments -> Either String ParseArguments
+    takeDrawingPath arg pa =
+      if parseDrawingPath pa == Nothing then
+        Right $ pa { parseDrawingPath = Just arg }
+      else
+        Left "Program takes one non-option argument; the path to the drawing"
 
 getSourceFileNames :: String -> [String] -> IO [String]
 getSourceFileNames ext dirs =
@@ -74,63 +137,61 @@ showTopLvlExn = either (Left . List.intercalate "," . (fmap show)) Right
 main :: IO ()
 main = do
   args <- Sys.getArgs
-  case args of
-    [dwg] -> do
-      drawingText <- readFile dwg
-      let
-        charPlane = charPlaneFromString drawingText
+  result <- runExceptT $ do
+    ParsedArguments {..} <- ExceptT $ pure $ parseArguments args
 
-      result <- runExceptT $ do
-        drawing :: GlyphDrawing Aeson.Value <- ExceptT $ pure $ showTopLvlExn $
-          getDrawing
-            (Yaml.decodeEither' . Text.encodeUtf8 . Text.pack)
-            (getTopLevelBinding "id")
-            charPlane
+    drawingText <- ExceptT $ Right <$> readFile parsedDrawingPath
 
-        let
-          dirOfDwg = Path.takeDirectory dwg
+    let
+      dirOfDwg = Path.takeDirectory parsedDrawingPath
+      charPlane = charPlaneFromString drawingText
 
-        sysYamlPath <- ExceptT $ pure $ getSystemYamlFromDrawing drawing
-        let
-          sysYamlFullPath = Path.combine dirOfDwg sysYamlPath
-          sysYamlParentDir = Path.takeDirectory sysYamlFullPath
+    drawing :: GlyphDrawing Aeson.Value <- ExceptT $ pure $ showTopLvlExn $
+      getDrawing
+        (Yaml.decodeEither' . Text.encodeUtf8 . Text.pack)
+        (getTopLevelBinding "id")
+        charPlane
 
-        sysYaml <- ExceptT $ Right <$> readFile sysYamlFullPath
-        system :: DockerSystemYaml <- ExceptT $ pure $ parseYaml sysYaml
+    sysYamlPath <- ExceptT $ pure $ getSystemYamlFromDrawing drawing
+    let
+      sysYamlFullPath = Path.combine dirOfDwg sysYamlPath
+      sysYamlParentDir = Path.takeDirectory sysYamlFullPath
 
-        let
-          sourceFullPaths = Path.combine sysYamlParentDir <$> dsySourceDirs system
+    sysYaml <- ExceptT $ Right <$> readFile sysYamlFullPath
+    system :: DockerSystemYaml <- ExceptT $ pure $ parseYaml sysYaml
 
-        protosList <- ExceptT $ Right <$> getSourceFileNames "netproto" sourceFullPaths
-        machinesList <- ExceptT $ Right <$> getSourceFileNames "machine" sourceFullPaths
+    let
+      sourceFullPaths = Path.combine sysYamlParentDir <$> dsySourceDirs system
 
-        protocolDefsRaw :: [(String,[NetProtoYaml])] <- ExceptT $ parseFilesAs protosList
-        let
-          protocolDefs =
-            Map.fromList $
-              (\np@NetProtoYaml {..} -> (npyName,np)) <$> concat (snd <$> protocolDefsRaw)
+    protosList <- ExceptT $ Right <$> getSourceFileNames "netproto" sourceFullPaths
+    machinesList <- ExceptT $ Right <$> getSourceFileNames "machine" sourceFullPaths
 
-        protocols <- ExceptT $ pure $ realizeProtocolDefs protocolDefs
+    protocolDefsRaw :: [(String,[NetProtoYaml])] <- ExceptT $ parseFilesAs protosList
+    let
+      protocolDefs =
+        Map.fromList $
+          (\np@NetProtoYaml {..} -> (npyName,np)) <$> concat (snd <$> protocolDefsRaw)
 
-        machineDefsRaw :: [(String,MachineDefYaml)] <- ExceptT $ parseFilesAs machinesList
-        machineDefsTmplRaw <- ExceptT $ Right <$> includeMachineTemplates machineDefsRaw
-        let
-          machineDefs =
-            Map.fromList $
-              (\(n,v) -> (Path.dropExtension $ Path.takeFileName n, v)) <$> machineDefsTmplRaw
+    protocols <- ExceptT $ pure $ realizeProtocolDefs protocolDefs
 
-        machines <- ExceptT $ pure $ realizeMachineDefs protocols machineDefs
+    machineDefsRaw :: [(String,MachineDefYaml)] <- ExceptT $ parseFilesAs machinesList
+    machineDefsTmplRaw <- ExceptT $ Right <$> includeMachineTemplates machineDefsRaw
 
-        sysdef <- ExceptT $ pure $ assembleSystem drawing system machines protocols
+    let
+      machineDefs =
+        Map.fromList $
+          (\(n,v) -> (Path.dropExtension $ Path.takeFileName n, v)) <$> machineDefsTmplRaw
 
-        sysyaml <- ExceptT $ pure $ createSystemYaml drawing sysdef
+    machines <- ExceptT $ pure $ realizeMachineDefs protocols machineDefs
 
-        pure sysyaml
+    sysdef <-
+      ExceptT $ pure $ assembleSystem drawing system machines protocols parsedVariables
 
-      either
-         (throwIO . FailedToAssembleException)
-         (putStrLn . Text.unpack . Text.decodeUtf8 . Yaml.encode)
-         result
+    sysyaml <- ExceptT $ pure $ createSystemYaml drawing sysdef
 
-    _ -> do
-      putStrLn "Usage: vcompose [drawing]"
+    pure sysyaml
+
+  either
+    (throwIO . FailedToAssembleException)
+    (putStrLn . Text.unpack . Text.decodeUtf8 . Yaml.encode)
+    result

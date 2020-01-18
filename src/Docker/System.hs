@@ -54,7 +54,6 @@ data MachineDefListenPort = MachineDefListenPort
 data MachineDefMount = MachineDefMount
   { mdmName :: String
   , mdmChar :: Char
-  , mdmTargetPath :: String
   }
   deriving (Show, Eq, Ord)
 
@@ -70,7 +69,6 @@ data MachineDef = MachineDef
   , mdTemplate :: Aeson.Value
   , mdPorts :: Map Char MachineDefListenPort
   , mdConnections :: Map Char MachineDefConn
-  , mdMounts :: Map Char MachineDefMount
   }
   deriving (Show, Eq)
 
@@ -93,7 +91,6 @@ data Machine = Machine
   , mNetwork :: String
   , mListenPorts :: Map Char MachineDefListenPort
   , mConnectPorts :: Map Char (MachineConn Machine)
-  , mMounts :: Map Char MachineDefMount
   }
   deriving (Show, Eq)
 
@@ -101,6 +98,7 @@ data DockerSystem = DockerSystem
   { dsMachineDefs :: Map String MachineDef
   , dsProtocols :: Map String NetProto
   , dsDrawing :: GlyphDrawing Aeson.Value
+  , dsEnvironment :: Map String String
   , dsMachineInstances :: Map String Machine
   }
   deriving (Show)
@@ -132,20 +130,10 @@ data NetConnectPortYaml = NetConnectPortYaml
 
 instance Aeson.FromJSON NetConnectPortYaml
 
-data MachineDefMountYaml = MachineDefMountYaml
-  { mdymName :: String
-  , mdymLabel :: String
-  , mdymTarget :: String
-  }
-  deriving (Show, Generic)
-
-instance Aeson.FromJSON MachineDefMountYaml
-
 data MachineDefYaml = MachineDefYaml
   { mdyBaseYaml :: String
   , mdyListenPorts :: [NetListenPortYaml]
   , mdyConnectPorts :: [NetConnectPortYaml]
-  , mdyMounts :: [MachineDefMountYaml]
   }
   deriving (Show, Generic)
 
@@ -243,7 +231,6 @@ realizeMachineDef protos defs machname =
           , mdConnections =
               Map.fromList $
                 (\mdc@MachineDefConn {..} -> (mdcChar, mdc)) <$> connectPorts
-          , mdMounts = Map.empty
           }
       else
         Left $ List.intercalate "," $ show <$> lpErrors
@@ -321,8 +308,9 @@ assembleSystem
   -> DockerSystemYaml
   -> Map String MachineDef
   -> Map String NetProto
+  -> Map String String
   -> Either String DockerSystem
-assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
+assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos env = do
   networkYaml <- getNetworkYaml gd
 
   let
@@ -338,6 +326,7 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
           , dsDrawing = gd
           , dsMachineInstances =
               Map.fromList $ ((\m -> (mName m,m)) . snd) <$> machineInstances
+          , dsEnvironment = env
           }
 
       machineByGlyph = Map.fromList machineInstances
@@ -375,7 +364,6 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
             , mNetwork = useNetwork
             , mListenPorts = mdPorts lookedUpMachine
             , mConnectPorts = (\m -> MachineConn m Nothing) <$> mdConnections lookedUpMachine
-            , mMounts = Map.empty
             }
         )
 
@@ -513,16 +501,24 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos = do
       foldM (performConnection drawing machineByGlyph gc) system $
       filter (\(vtx,conns) -> toGlyph vtx == gid) $ Map.toList nets
 
-queryVariableFromMachine :: Machine -> String -> Maybe String
-queryVariableFromMachine m ident =
+getEnvVar :: GlyphDrawing Aeson.Value -> DockerSystem -> Machine -> String -> Either String String
+getEnvVar drawing system m ident =
+  CE.note ("No such replacement variable " ++ ident ++ " provided, required by " ++ mName m) $
+  Map.lookup ident $ dsEnvironment system
+
+queryVariableFromMachine
+  :: GlyphDrawing Aeson.Value -> DockerSystem -> Machine -> String -> Either String String
+queryVariableFromMachine drawing system m ident = do
   case getTopLevelBinding ident (mGlyphData m) of
-    Just v -> Just v
+    Just v -> Right v
     _ ->
       let
         splitOnDots = List.splitOn "." ident
       in
       case splitOnDots of
         [listener,"port","internal"] ->
+          CE.note
+            ("Could not find listening port for " ++ listener ++ " in machine " ++ mName m) $
           (show . mdpInternal . fst) <$>
           (List.uncons $
             filter (\MachineDefListenPort {..} -> mdpName == listener) $
@@ -534,6 +530,8 @@ queryVariableFromMachine m ident =
               filter (\MachineConn {..} -> mdcName mcDefinition == connect) $
               Map.elems $ mConnectPorts m
           in
+          CE.note
+            ("Could not find connection for " ++ connect ++ " in machine " ++ mName m) $
           (show . mdpInternal) <$>
           (mctTargetListener <$>
            (mcTarget =<<
@@ -543,6 +541,8 @@ queryVariableFromMachine m ident =
           )
 
         [connect,"host"] ->
+          CE.note
+            ("Could not find connection for " ++ connect ++ " in machine " ++ mName m) $
           ((mName . mctTargetMachine) <$>
             (mcTarget =<<
              fst <$>
@@ -552,7 +552,7 @@ queryVariableFromMachine m ident =
             )
           )
 
-        _ -> Nothing
+        _ -> getEnvVar drawing system m ident
 
 makeDependsSet :: Machine -> Aeson.Value
 makeDependsSet m =
@@ -598,8 +598,9 @@ makeExternalPorts m v =
         ) <$> keys
       )
 
-machineToServiceEntry :: GlyphDrawing Aeson.Value -> Machine -> Aeson.Value
-machineToServiceEntry gd m =
+machineToServiceEntry
+  :: GlyphDrawing Aeson.Value -> DockerSystem -> Machine -> Either String Aeson.Value
+machineToServiceEntry gd system m =
   let
     netYaml = getNetworkYaml gd
     networks =
@@ -608,21 +609,26 @@ machineToServiceEntry gd m =
         (Aeson.Array . Vector.fromList . fmap (Aeson.String . Text.pack))
         (keysOfDict =<< netYaml)
   in
-  identifyCheckReplaceVariables (queryVariableFromMachine m) $
+  identifyCheckReplaceVariables (queryVariableFromMachine gd system m) $
     addKey "networks" networks $
     addKey "depends_on" (makeDependsSet m) $
     addKey "ports" (makeExternalPorts m $ mGlyphData m) $
     mTemplate m
 
 createSystemYaml :: GlyphDrawing Aeson.Value -> DockerSystem -> Either String Aeson.Value
-createSystemYaml gd system@(DockerSystem {..}) =
+createSystemYaml gd system@(DockerSystem {..}) = do
   let
     machineInstances = Map.elems dsMachineInstances
 
-    services =
-      Aeson.Object $
-      HashMap.fromList $
-      (\m -> (Text.pack (mName m), machineToServiceEntry gd m)) <$> machineInstances
+  servicesRaw <-
+    traverse
+       (\m -> do
+          serviceEntry <- machineToServiceEntry gd system m
+          pure (Text.pack (mName m), serviceEntry)
+       ) machineInstances
+
+  let
+    services = Aeson.Object $ HashMap.fromList servicesRaw
 
     networks =
       either
@@ -631,7 +637,6 @@ createSystemYaml gd system@(DockerSystem {..}) =
         (getNetworkYaml gd)
 
     baseYaml = emptyObject
-  in
 
   pure $
     addKey "services" services $
