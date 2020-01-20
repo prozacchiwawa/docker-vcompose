@@ -2,6 +2,16 @@
 
 A tool for building docker compose files in layers, and using ascii art drawings.
 
+## Usage
+
+vcompose [-Dvar=val ...] file.dml
+
+- Dvar=val -- Defines a replacement variable for use in ```${...}``` in template yaml.
+
+- Paths in dml and .machine template files are relative to the file containing them.
+
+- See example.
+
 Basically, you can define machines by template, specify variables to replace either on the
 command line or in the glyphs of the drawing.  A protocol hierarchy is specified so that
 connections between machines are type checked.  Variable replacements are checked as well.
