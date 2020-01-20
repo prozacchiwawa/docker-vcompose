@@ -19,8 +19,8 @@ import qualified System.IO as Sys
 
 import Docker.Drawing
 import Docker.System
-import Util.CharPlane
-import Util.Glyph
+import Data.Glyphic.CharPlane.Simple
+import Data.Glyphic.Glyph
 
 data FailedToAssembleException = FailedToAssembleException String deriving (Show)
 instance Exception FailedToAssembleException
@@ -144,7 +144,7 @@ main = do
 
     let
       dirOfDwg = Path.takeDirectory parsedDrawingPath
-      charPlane = charPlaneFromString drawingText
+      charPlane = simpleCharPlaneFromString drawingText
 
     drawing :: GlyphDrawing Aeson.Value <- ExceptT $ pure $ showTopLvlExn $
       getDrawing

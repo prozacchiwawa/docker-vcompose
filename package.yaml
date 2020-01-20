@@ -32,6 +32,7 @@ dependencies:
 - directory
 - errors
 - filepath
+- glyphic
 - scientific
 - split
 - text

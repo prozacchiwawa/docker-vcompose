@@ -20,6 +20,7 @@ import Control.Monad.Trans.Except
 
 import qualified Data.Aeson as Aeson
 import Data.Either
+import Data.Glyphic.Glyph
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.List as List
 import qualified Data.List.Split as List
@@ -35,7 +36,6 @@ import qualified Data.Vector as Vector
 import qualified Data.Yaml as Yaml
 
 import Util.Aeson
-import Util.Glyph
 
 data NetProto = NetProto
   { npName :: String
@@ -281,7 +281,7 @@ getNetworkYaml gd@GlyphDrawing {..} = do
     CE.note "No glyph exists with networks key" $
     List.uncons $
     catMaybes $
-    (\(gid,gc@GlyphContent {..}) -> getTopLevelValue "networks" gData) <$> Map.toList glyphs
+    (\(gid,gc@GlyphContent {..}) -> getTopLevelValue "networks" gData) <$> Map.toList gGlyphs
 
   if null tl then
     pure networks
@@ -332,14 +332,14 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos env = 
       machineByGlyph = Map.fromList machineInstances
 
     connectedSystem <-
-      foldM (performConnections gd machineByGlyph) basicSystem $ Map.toList glyphs
+      foldM (performConnections gd machineByGlyph) basicSystem $ Map.toList gGlyphs
 
     pure connectedSystem
   else
     Left $ List.intercalate "," $ show <$> miErrors
 
   where
-    glyphList = Map.toList glyphs
+    glyphList = Map.toList gGlyphs
     glyphMachines = catMaybes $ (uncurry associateMachineDef) <$> glyphList
 
     createBareMachineInstance
@@ -381,12 +381,12 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos env = 
       -> Either String InProgressConnectionType
     getConnectionType machines gvtx@(GlyphVertex {..}) = do
       machine <-
-        CE.note ("machine lookup failed for glyph id " ++ show toGlyph) $
-        Map.lookup toGlyph machines
+        CE.note ("machine lookup failed for glyph id " ++ show gToGlyph) $
+        Map.lookup gToGlyph machines
 
       let
-        connectionAmongListen = Map.lookup conn $ mListenPorts machine
-        connectionAmongOutbound = Map.lookup conn $ mConnectPorts machine
+        connectionAmongListen = Map.lookup gConn $ mListenPorts machine
+        connectionAmongOutbound = Map.lookup gConn $ mConnectPorts machine
 
       case (connectionAmongListen, connectionAmongOutbound) of
         (Just listen, Just outbound) ->
@@ -466,8 +466,8 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos env = 
       -> Either String DockerSystem
     performConnection drawing machineByGlyph gc@GlyphContent {..} system (gvtx@GlyphVertex {..}, connectedTo) = do
       firstMachine <-
-        CE.note ("Lookup failed for glyph id (to) " ++ show toGlyph) $
-        Map.lookup toGlyph machineByGlyph
+        CE.note ("Lookup failed for glyph id (to) " ++ show gToGlyph) $
+        Map.lookup gToGlyph machineByGlyph
 
       typeAtOrigin <- getConnectionType machineByGlyph gvtx
       connTypeList <- getConnectionTypeList machineByGlyph $ Set.toList connectedTo
@@ -499,7 +499,7 @@ assembleSystem gd@GlyphDrawing {..} DockerSystemYaml {..} machines protos env = 
       -> Either String DockerSystem
     performConnections drawing@GlyphDrawing {..} machineByGlyph system (gid, gc@GlyphContent {..}) =
       foldM (performConnection drawing machineByGlyph gc) system $
-      filter (\(vtx,conns) -> toGlyph vtx == gid) $ Map.toList nets
+      filter (\(vtx,conns) -> gToGlyph vtx == gid) $ Map.toList gNets
 
 getEnvVar :: GlyphDrawing Aeson.Value -> DockerSystem -> Machine -> String -> Either String String
 getEnvVar drawing system m ident =

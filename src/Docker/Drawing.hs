@@ -15,7 +15,7 @@ import qualified Data.Text as Text
 
 import Docker.System as System
 import Util.Aeson
-import Util.Glyph
+import Data.Glyphic.Glyph
 
 data MachineInstance = MachineInstance
   { glyphId :: GlyphId
@@ -33,7 +33,7 @@ getDockerSystemDef GlyphDrawing {..} =
   let
     yamls =
       catMaybes $
-        (\(gid,gc) -> (gid,) <$> getSystemFilenameFromGlyphContent gc) <$> Map.toList glyphs
+        (\(gid,gc) -> (gid,) <$> getSystemFilenameFromGlyphContent gc) <$> Map.toList gGlyphs
   in
   case yamls of
     [] -> Left "No system-yaml declaration found in any glyph"

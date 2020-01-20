@@ -3,7 +3,21 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages: []
+packages:
+- completed:
+    cabal-file:
+      size: 1611
+      sha256: 960c8412af4974937ed49e94cdb22dad299aff15a10adc37664ad3e67caf8faf
+    name: glyphic
+    version: 0.1.0.0
+    git: https://github.com/prozacchiwawa/haskell-glyphic.git
+    pantry-tree:
+      size: 680
+      sha256: 527844adcd5172169fadfe76d784ce9e2241a01ea01fd198bc44d2902ce062b1
+    commit: dc0961ac3d6a9bbf2297e88a79a0b46c82c17123
+  original:
+    git: https://github.com/prozacchiwawa/haskell-glyphic.git
+    commit: dc0961ac3d6a9bbf2297e88a79a0b46c82c17123
 snapshots:
 - completed:
     size: 524154
